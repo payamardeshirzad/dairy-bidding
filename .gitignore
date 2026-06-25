@@ -1,0 +1,21 @@
+# .NET
+bin/
+obj/
+out/
+TestResults/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# VS Code (optional: keep if you want shared settings)
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+*.cache
