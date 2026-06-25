@@ -1,0 +1,6 @@
+@DairyBidding.IdentityService_HostAddress = http://localhost:5245
+
+GET {{DairyBidding.IdentityService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

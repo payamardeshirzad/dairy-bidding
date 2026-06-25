@@ -1,0 +1,12 @@
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\bin\Debug\net9.0\DairyBidding.Contracts.deps.json
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\bin\Debug\net9.0\DairyBidding.Contracts.dll
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\bin\Debug\net9.0\DairyBidding.Contracts.pdb
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.AssemblyInfoInputs.cache
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.AssemblyInfo.cs
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.csproj.CoreCompileInputs.cache
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.sourcelink.json
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.dll
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\refint\DairyBidding.Contracts.dll
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\DairyBidding.Contracts.pdb
+D:\Source\repos\dairy-bidding\src\DairyBidding.Contracts\obj\Debug\net9.0\ref\DairyBidding.Contracts.dll

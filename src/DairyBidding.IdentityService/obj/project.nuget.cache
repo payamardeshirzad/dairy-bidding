@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "A8ujet37q7M=",
+  "success": true,
+  "projectFilePath": "D:\\Source\\repos\\dairy-bidding\\src\\DairyBidding.IdentityService\\DairyBidding.IdentityService.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Payam\\.nuget\\packages\\microsoft.aspnetcore.openapi\\9.0.8\\microsoft.aspnetcore.openapi.9.0.8.nupkg.sha512",
+    "C:\\Users\\Payam\\.nuget\\packages\\microsoft.openapi\\1.6.17\\microsoft.openapi.1.6.17.nupkg.sha512"
+  ],
+  "logs": []
+}
