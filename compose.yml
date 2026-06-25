@@ -1,0 +1,151 @@
+name: dairy-bidding-local
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    container_name: dairy-postgres
+    environment:
+      POSTGRES_USER: dairy_admin
+      POSTGRES_PASSWORD: dairy_local_pass
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dairy_admin -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: dairy-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: docker.io/library/rabbitmq:3.13-management
+    container_name: dairy-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: dairy
+      RABBITMQ_DEFAULT_PASS: dairy_local_pass
+      RABBITMQ_DEFAULT_VHOST: dairy-bidding
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: docker.io/minio/minio:latest
+    container_name: dairy-minio
+    environment:
+      MINIO_ROOT_USER: dairy_minio
+      MINIO_ROOT_PASSWORD: dairy_minio_pass
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    container_name: dairy-mailpit
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    restart: unless-stopped
+
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: dairy-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:Z
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    restart: unless-stopped
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: dairy-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources:Z
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  jaeger:
+    image: docker.io/jaegertracing/all-in-one:latest
+    container_name: dairy-jaeger
+    ports:
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.io/library/elasticsearch:8.13.0
+    container_name: dairy-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -E '\"status\":\"(green|yellow)\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+  rabbitmq_data:
+  minio_data:
+  es_data:
+  prometheus_data:
+  grafana_data:
