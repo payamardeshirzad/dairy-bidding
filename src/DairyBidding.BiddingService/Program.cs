@@ -11,8 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 
 // Add services to the container.
+builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection("RabbitMQ"));
 builder.Services.AddSingleton<IBidPlacedPublisher, BidPlacedPublisher>();
-
+builder.Services.AddHostedService<BidPlacedConsumer>();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -44,8 +45,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
-builder.Services.Configure<RabbitMqOptions>(
-    builder.Configuration.GetSection("RabbitMQ"));
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
