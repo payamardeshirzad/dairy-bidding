@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using DairyBidding.BiddingService.Data;
+using DairyBidding.BiddingService.Messaging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -10,6 +11,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 
 // Add services to the container.
+builder.Services.AddSingleton<IBidPlacedPublisher, BidPlacedPublisher>();
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -41,15 +44,17 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.Configure<RabbitMqOptions>(
+    builder.Configuration.GetSection("RabbitMQ"));
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+} else {
+    app.UseHttpsRedirection();
 }
-
-//app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -57,24 +62,15 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
     db.Database.EnsureCreated();
-    Console.WriteLine(db.Database.GetConnectionString());
-    Console.WriteLine("EnsureCreated executed.");
-
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "bidding" }));
 
-app.MapGet("/auctions/active", () =>
-{
-    var auctions = new[]
-    {
-        new { auctionId = "AUC-1001", title = "Cheddar Batch 12", currentPrice = 1200.00m, currency = "USD" },
-        new { auctionId = "AUC-1002", title = "Gouda Reserve Lot", currentPrice = 980.50m, currency = "USD" }
-    };
-    return Results.Ok(auctions);
-});
-
-app.MapPost("/bids", async (PlaceBidRequest request, ClaimsPrincipal user, BiddingDbContext db) =>
+app.MapPost("/bids", async (
+    PlaceBidRequest request,
+    ClaimsPrincipal user,
+    BiddingDbContext db,
+    IBidPlacedPublisher publisher) =>
 {
     var bidder = user.Identity?.Name ?? user.FindFirstValue(ClaimTypes.Name) ?? "unknown";
 
@@ -85,9 +81,16 @@ app.MapPost("/bids", async (PlaceBidRequest request, ClaimsPrincipal user, Biddi
         Amount = request.Amount,
         CreatedAtUtc = DateTime.UtcNow
     };
-
+    Console.WriteLine($"Placing bid: AuctionId={bid.AuctionId}, BidderId={bid.BidderId}, Amount={bid.Amount}, CreatedAtUtc={bid.CreatedAtUtc}");
     db.Bids.Add(bid);
     await db.SaveChangesAsync();
+
+    publisher.Publish(new BidPlacedEvent(
+        bid.Id,
+        bid.AuctionId,
+        bid.BidderId,
+        bid.Amount,
+        bid.CreatedAtUtc));
 
     return Results.Ok(new
     {
