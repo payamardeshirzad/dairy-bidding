@@ -19,9 +19,20 @@ public class BidPlacedConsumer : BackgroundService
     private IConnection? _connection;
     private IModel? _channel;
 
-    private const string Exchange = "bidding.events";
-    private const string Queue = "bidding.bidplaced";
-    private const string RoutingKey = "bid.placed";
+    private const string MainExchange = "bidding.events";
+    private const string MainQueue = "bidding.bidplaced";
+    private const string MainRoutingKey = "bid.placed";
+
+    private const string RetryExchange = "bidding.events.retry";
+    private const string RetryQueue = "bidding.bidplaced.retry";
+    private const string RetryRoutingKey = "bid.placed.retry";
+
+    private const string DlxExchange = "bidding.events.dlx";
+    private const string DlqQueue = "bidding.bidplaced.dlq";
+    private const string DlqRoutingKey = "bid.placed.dlq";
+
+    private const int RetryDelayMs = 5000;   // 5s between attempts
+    private const int MaxRetries = 3;        // after 3 retries -> DLQ
 
     public BidPlacedConsumer(
         IOptions<RabbitMqOptions> options,
@@ -49,13 +60,30 @@ public class BidPlacedConsumer : BackgroundService
         _connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
 
-        _channel.ExchangeDeclare(exchange: Exchange, type: ExchangeType.Topic, durable: true, autoDelete: false);
-        _channel.QueueDeclare(queue: Queue, durable: true, exclusive: false, autoDelete: false);
-        _channel.QueueBind(queue: Queue, exchange: Exchange, routingKey: RoutingKey);
+        // Exchanges
+        _channel.ExchangeDeclare(MainExchange, ExchangeType.Topic, durable: true, autoDelete: false);
+        _channel.ExchangeDeclare(RetryExchange, ExchangeType.Topic, durable: true, autoDelete: false);
+        _channel.ExchangeDeclare(DlxExchange, ExchangeType.Topic, durable: true, autoDelete: false);
 
-        // Process one message at a time for predictable behavior in this step
-        _channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
+        // Main queue
+        _channel.QueueDeclare(MainQueue, durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueBind(MainQueue, MainExchange, MainRoutingKey);
 
+        // Retry queue: dead-letters back to main exchange after TTL
+        var retryArgs = new Dictionary<string, object>
+        {
+            ["x-message-ttl"] = RetryDelayMs,
+            ["x-dead-letter-exchange"] = MainExchange,
+            ["x-dead-letter-routing-key"] = MainRoutingKey
+        };
+        _channel.QueueDeclare(RetryQueue, durable: true, exclusive: false, autoDelete: false, arguments: retryArgs);
+        _channel.QueueBind(RetryQueue, RetryExchange, RetryRoutingKey);
+
+        // DLQ
+        _channel.QueueDeclare(DlqQueue, durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueBind(DlqQueue, DlxExchange, DlqRoutingKey);
+
+        _channel.BasicQos(0, 1, false);
         _logger.LogInformation("BidPlacedConsumer connected to RabbitMQ {Host}:{Port}, vhost {VHost}",
             _options.Host, _options.Port, _options.VHost);
 
@@ -91,7 +119,7 @@ public class BidPlacedConsumer : BackgroundService
                     _channel.BasicAck(ea.DeliveryTag, false);
                     return;
                 }
-
+                
                 // TODO: your actual side-effect here (read model update, etc.)
                 _logger.LogInformation("Processing message MessageId={MessageId}, BidId={BidId}", evt.MessageId, evt.BidId);
 
@@ -106,17 +134,60 @@ public class BidPlacedConsumer : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process BidPlaced message. Nack without requeue.");
-                _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                var currentRetry = GetRetryCount(ea.BasicProperties);
+                var nextRetry = currentRetry + 1;
+
+                try
+                {
+                    if (nextRetry <= MaxRetries)
+                    {
+                        var retryProps = CreateRepublishProperties(ea.BasicProperties, nextRetry);
+
+                        _channel!.BasicPublish(
+                            exchange: RetryExchange,
+                            routingKey: RetryRoutingKey,
+                            basicProperties: retryProps,
+                            body: ea.Body);
+
+                        _logger.LogWarning(ex,
+                            "Processing failed. Message requeued to RETRY. RetryAttempt={RetryAttempt}/{MaxRetries}, DeliveryTag={DeliveryTag}",
+                            nextRetry, MaxRetries, ea.DeliveryTag);
+                    }
+                    else
+                    {
+                        var dlqProps = CreateRepublishProperties(ea.BasicProperties, currentRetry);
+
+                        _channel!.BasicPublish(
+                            exchange: DlxExchange,
+                            routingKey: DlqRoutingKey,
+                            basicProperties: dlqProps,
+                            body: ea.Body);
+
+                        _logger.LogError(ex,
+                            "Processing failed. Message sent to DLQ after max retries. Retries={Retries}, DeliveryTag={DeliveryTag}",
+                            currentRetry, ea.DeliveryTag);
+                    }
+
+                    // Ack original message because we safely republished it
+                    _channel!.BasicAck(ea.DeliveryTag, false);
+                }
+                catch (Exception republishEx)
+                {
+                    _logger.LogError(republishEx,
+                        "Failed to republish message to retry/DLQ. Nack with requeue=true to avoid loss. DeliveryTag={DeliveryTag}",
+                        ea.DeliveryTag);
+
+                    _channel!.BasicNack(ea.DeliveryTag, false, requeue: true);
+                }
             }
         };
 
         _channel.BasicConsume(
-            queue: Queue,
+            queue: MainQueue,
             autoAck: false,
             consumer: consumer);
 
-        _logger.LogInformation("BidPlacedConsumer started. Waiting for messages on queue '{Queue}'", Queue);
+        _logger.LogInformation("BidPlacedConsumer started. Waiting for messages on queue '{Queue}'", MainQueue);
 
         return Task.CompletedTask;
     }
@@ -141,5 +212,42 @@ public class BidPlacedConsumer : BackgroundService
         _channel?.Dispose();
         _connection?.Dispose();
         base.Dispose();
+    }
+    private static int GetRetryCount(IBasicProperties props)
+    {
+        if (props.Headers is null) return 0;
+        if (!props.Headers.TryGetValue("x-retry-count", out var raw) || raw is null) return 0;
+
+        return raw switch
+        {
+            byte b => b,
+            sbyte sb => sb,
+            short s => s,
+            ushort us => us,
+            int i => i,
+            long l => (int)l,
+            byte[] bytes when int.TryParse(Encoding.UTF8.GetString(bytes), out var parsed) => parsed,
+            _ => 0
+        };
+    }
+
+    private IBasicProperties CreateRepublishProperties(IBasicProperties? sourceProps, int retryCount)
+    {
+        var props = _channel!.CreateBasicProperties();
+        props.Persistent = true;
+        props.ContentType = sourceProps?.ContentType ?? "application/json";
+
+        var headers = new Dictionary<string, object>();
+        if (sourceProps?.Headers is not null)
+        {
+            foreach (var kv in sourceProps.Headers)
+                headers[kv.Key] = kv.Value;
+        }
+
+        headers["x-retry-count"] = retryCount;
+        headers["x-error-at"] = DateTime.UtcNow.ToString("O");
+        props.Headers = headers;
+
+        return props;
     }
 }
