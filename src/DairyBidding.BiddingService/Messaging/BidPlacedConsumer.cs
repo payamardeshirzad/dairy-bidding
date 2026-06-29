@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using DairyBidding.BiddingService.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,6 +14,7 @@ public class BidPlacedConsumer : BackgroundService
 {
     private readonly ILogger<BidPlacedConsumer> _logger;
     private readonly RabbitMqOptions _options;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     private IConnection? _connection;
     private IModel? _channel;
@@ -22,10 +25,12 @@ public class BidPlacedConsumer : BackgroundService
 
     public BidPlacedConsumer(
         IOptions<RabbitMqOptions> options,
-        ILogger<BidPlacedConsumer> logger)
+        ILogger<BidPlacedConsumer> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _options = options.Value;
         _logger = logger;
+        _scopeFactory = scopeFactory;
     }
 
     public override Task StartAsync(CancellationToken cancellationToken)
@@ -64,20 +69,39 @@ public class BidPlacedConsumer : BackgroundService
 
         var consumer = new EventingBasicConsumer(_channel);
 
-        consumer.Received += (_, ea) =>
+        consumer.Received += async (_, ea) =>
         {
             try
             {
                 var json = Encoding.UTF8.GetString(ea.Body.ToArray());
-                var evt = JsonSerializer.Deserialize<BidPlacedEvent>(json);
+                var evt = JsonSerializer.Deserialize<BidPlacedEvent>(json)
+                          ?? throw new InvalidOperationException("Invalid message payload.");
+                if (string.IsNullOrWhiteSpace(evt.MessageId))
+                    throw new InvalidOperationException("MessageId is required for idempotency.");
 
-                if (evt is null)
-                    throw new InvalidOperationException("Deserialized BidPlacedEvent is null.");
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
 
-                _logger.LogInformation(
-                    "Consumed BidPlaced: BidId={BidId}, AuctionId={AuctionId}, BidderId={BidderId}, Amount={Amount}, CreatedAtUtc={CreatedAtUtc}",
-                    evt.BidId, evt.AuctionId, evt.BidderId, evt.Amount, evt.CreatedAtUtc);
+                var alreadyProcessed = await db.ProcessedMessages
+                    .AnyAsync(x => x.MessageId == evt.MessageId);
 
+                if (alreadyProcessed)
+                {
+                    _logger.LogInformation("Duplicate message skipped. MessageId={MessageId}", evt.MessageId);
+                    _channel.BasicAck(ea.DeliveryTag, false);
+                    return;
+                }
+
+                // TODO: your actual side-effect here (read model update, etc.)
+                _logger.LogInformation("Processing message MessageId={MessageId}, BidId={BidId}", evt.MessageId, evt.BidId);
+
+                db.ProcessedMessages.Add(new ProcessedMessage
+                {
+                    MessageId = evt.MessageId,
+                    ProcessedAtUtc = DateTime.UtcNow
+                });
+
+                await db.SaveChangesAsync();
                 _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
             }
             catch (Exception ex)

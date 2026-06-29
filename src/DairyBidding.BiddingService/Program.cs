@@ -61,36 +61,89 @@ app.UseAuthorization();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "bidding" }));
 
 app.MapPost("/bids", async (
+    HttpContext http,
     PlaceBidRequest request,
     ClaimsPrincipal user,
     BiddingDbContext db,
     IBidPlacedPublisher publisher) =>
 {
-    var bidder = user.Identity?.Name ?? user.FindFirstValue(ClaimTypes.Name) ?? "unknown";
+    var bidderId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
 
+    if (!http.Request.Headers.TryGetValue("Idempotency-Key", out var keyValues))
+        return Results.BadRequest("Missing Idempotency-Key header.");
+
+    var idempotencyKey = keyValues.ToString().Trim();
+    if (string.IsNullOrWhiteSpace(idempotencyKey))
+        return Results.BadRequest("Idempotency-Key cannot be empty.");
+
+    // 1) Check existing
+    var existing = await db.Bids
+        .AsNoTracking()
+        .FirstOrDefaultAsync(x => x.BidderId == bidderId && x.IdempotencyKey == idempotencyKey);
+
+    if (existing is not null)
+    {
+        // Already created earlier; do NOT publish again
+        return Results.Ok(new
+        {
+            existing.Id,
+            existing.AuctionId,
+            existing.BidderId,
+            existing.Amount,
+            existing.CreatedAtUtc,
+            Deduplicated = true
+        });
+    }
+
+    // 2) Create new bid
     var bid = new Bid
     {
         AuctionId = request.AuctionId,
-        BidderId = bidder,
+        BidderId = bidderId,
         Amount = request.Amount,
-        CreatedAtUtc = DateTime.UtcNow
+        CreatedAtUtc = DateTime.UtcNow,
+        IdempotencyKey = idempotencyKey
     };
     Console.WriteLine($"Placing bid: AuctionId={bid.AuctionId}, BidderId={bid.BidderId}, Amount={bid.Amount}, CreatedAtUtc={bid.CreatedAtUtc}");
     db.Bids.Add(bid);
-    await db.SaveChangesAsync();
+    try
+    {
+        await db.SaveChangesAsync();
+    }
+    catch (DbUpdateException)
+    {
+        // Race condition: another request inserted same (BidderId, IdempotencyKey)
+        var raced = await db.Bids
+            .AsNoTracking()
+            .FirstAsync(x => x.BidderId == bidderId && x.IdempotencyKey == idempotencyKey);
 
-    publisher.Publish(new BidPlacedEvent(
-        bid.Id,
-        bid.AuctionId,
-        bid.BidderId,
-        bid.Amount,
-        bid.CreatedAtUtc));
+        return Results.Ok(new
+        {
+            raced.Id,
+            raced.AuctionId,
+            raced.BidderId,
+            raced.Amount,
+            raced.CreatedAtUtc,
+            Deduplicated = true
+        });
+    }
+
+    // 3) Publish only for newly created bid
+    var evt = new BidPlacedEvent(
+    Guid.NewGuid().ToString("N"),
+    bid.Id,
+    bid.AuctionId,
+    bid.BidderId,
+    bid.Amount,
+    bid.CreatedAtUtc
+);
+    publisher.Publish(evt);
 
     return Results.Ok(new
     {
@@ -98,7 +151,8 @@ app.MapPost("/bids", async (
         bid.AuctionId,
         bid.BidderId,
         bid.Amount,
-        bid.CreatedAtUtc
+        bid.CreatedAtUtc,
+        Deduplicated = false
     });
 }).RequireAuthorization();
 

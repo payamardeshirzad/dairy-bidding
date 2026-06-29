@@ -7,6 +7,7 @@ public class BiddingDbContext : DbContext
     public BiddingDbContext(DbContextOptions<BiddingDbContext> options) : base(options) { }
 
     public DbSet<Bid> Bids => Set<Bid>();
+    public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -19,15 +20,17 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.BidderId).HasColumnName("bidderid").HasMaxLength(100).IsRequired();
             e.Property(x => x.Amount).HasColumnName("amount").HasColumnType("numeric(18,2)").IsRequired();
             e.Property(x => x.CreatedAtUtc).HasColumnName("createdatutc").IsRequired();
+            e.Property(x => x.IdempotencyKey).HasColumnName("idempotencykey").HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.BidderId, x.IdempotencyKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<ProcessedMessage>(e =>
+        {
+            e.ToTable("processed_messages");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.MessageId).HasColumnName("messageid").HasMaxLength(100).IsRequired();
+            e.Property(x => x.ProcessedAtUtc).HasColumnName("processedatutc").IsRequired();
         });
     }
-}
-
-public class Bid
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string AuctionId { get; set; } = default!;
-    public string BidderId { get; set; } = default!;
-    public decimal Amount { get; set; }
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
