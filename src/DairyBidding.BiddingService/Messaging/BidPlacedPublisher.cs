@@ -7,73 +7,97 @@ namespace DairyBidding.BiddingService.Messaging;
 
 public interface IBidPlacedPublisher
 {
-    void Publish(BidPlacedEvent evt);
+    Task PublishAsync(BidPlacedEvent evt, string? correlationId = null, CancellationToken cancellationToken = default);
+    ValueTask DisposeAsync();
 }
 
-public class BidPlacedPublisher : IBidPlacedPublisher, IDisposable
+public class BidPlacedPublisher : IBidPlacedPublisher, IHostedService, IAsyncDisposable
 {
-    private readonly IConnection _connection;
-    private readonly IModel _channel;
-
+    private IConnection? _connection;
+    private IChannel? _channel;
+    private readonly RabbitMqOptions _options;
+    private readonly ILogger<BidPlacedPublisher> _logger;
     private const string Exchange = "bidding.events";
     private const string Queue = "bidding.bidplaced";
     private const string RoutingKey = "bid.placed";
+    private volatile bool _ready;
 
-    public BidPlacedPublisher(IOptions<RabbitMqOptions> options)
+    public BidPlacedPublisher(IOptions<RabbitMqOptions> options, ILogger<BidPlacedPublisher> logger)
     {
-        var o = options.Value;
+        _options = options.Value;
+        _logger = logger;
+    }
 
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
         var factory = new ConnectionFactory
         {
-            HostName = o.Host,
-            Port = o.Port,
-            UserName = o.User,
-            Password = o.Pass,
-            VirtualHost = o.VHost,
+            HostName = _options.Host,
+            Port = _options.Port,
+            UserName = _options.User,
+            Password = _options.Pass,
+            VirtualHost = _options.VHost,
             RequestedConnectionTimeout = TimeSpan.FromSeconds(10),
             SocketReadTimeout = TimeSpan.FromSeconds(10),
             SocketWriteTimeout = TimeSpan.FromSeconds(10),
             AutomaticRecoveryEnabled = true
         };
-        Console.WriteLine($"Connecting to RabbitMQ at {o.Host}:{o.Port} with user '{o.User}', Password '{o.Pass}' and vhost '{o.VHost}'");
-        try
-        {
-            _connection = factory.CreateConnection();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to connect to RabbitMQ: {ex.Message}");
-            throw;
-        }
-        Console.WriteLine($"Connected to RabbitMQ at {o.Host}:{o.Port} with user '{o.User}' and vhost '{o.VHost}'");
 
-        _channel = _connection.CreateModel();
+        _logger.LogInformation("Connecting to RabbitMQ at {Host}:{Port} vhost={VHost}", _options.Host, _options.Port, _options.VHost);
 
-        _channel.ExchangeDeclare(exchange: Exchange, type: ExchangeType.Topic, durable: true, autoDelete: false);
-        _channel.QueueDeclare(queue: Queue, durable: true, exclusive: false, autoDelete: false);
-        _channel.QueueBind(queue: Queue, exchange: Exchange, routingKey: RoutingKey);
+        _connection = await factory.CreateConnectionAsync(cancellationToken);
+        _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+        await _channel.ExchangeDeclareAsync(exchange: Exchange, type: ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.QueueDeclareAsync(queue: Queue, durable: true, exclusive: false, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.QueueBindAsync(queue: Queue, exchange: Exchange, routingKey: RoutingKey, cancellationToken: cancellationToken);
+
+        _ready = true;
+        _logger.LogInformation("RabbitMQ publisher is ready.");
     }
 
-    public void Publish(BidPlacedEvent evt)
+    public Task StopAsync(CancellationToken cancellationToken)
     {
+        _ready = false;
+        return Task.CompletedTask;
+    }
+
+    public async Task PublishAsync(BidPlacedEvent evt, string? correlationId = null, CancellationToken cancellationToken = default)
+    {
+                if (!_ready || _channel is null) throw new InvalidOperationException("Publisher not initialized.");
         var json = JsonSerializer.Serialize(evt);
         var body = Encoding.UTF8.GetBytes(json);
 
-        var props = _channel.CreateBasicProperties();
-        props.DeliveryMode = 2; // persistent
-        props.ContentType = "application/json";
+        var props = new BasicProperties
+        {
+            Persistent = true,
+            ContentType = "application/json",
+            MessageId = evt.MessageId,
+            Headers = new Dictionary<string, object?>()
+        };
 
-        _channel.BasicPublish(
+        if (!string.IsNullOrWhiteSpace(correlationId))
+            props.Headers["x-correlation-id"] = correlationId;
+
+        await _channel.BasicPublishAsync(
             exchange: Exchange,
             routingKey: RoutingKey,
+            mandatory: false,
             basicProperties: props,
-            body: body);
+            body: body,
+            cancellationToken: cancellationToken);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        Console.WriteLine("Disposing RabbitMQ connection and channel");
-        _channel?.Dispose();
-        _connection?.Dispose();
+        try
+        {
+            if (_channel is not null) await _channel.DisposeAsync();
+            if (_connection is not null) await _connection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error disposing RabbitMQ publisher resources.");
+        }
     }
 }

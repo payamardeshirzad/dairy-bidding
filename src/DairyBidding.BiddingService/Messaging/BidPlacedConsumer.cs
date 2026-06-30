@@ -2,8 +2,6 @@ using System.Text;
 using System.Text.Json;
 using DairyBidding.BiddingService.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -17,7 +15,7 @@ public class BidPlacedConsumer : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
 
     private IConnection? _connection;
-    private IModel? _channel;
+    private IChannel? _channel;
 
     private const string MainExchange = "bidding.events";
     private const string MainQueue = "bidding.bidplaced";
@@ -31,8 +29,8 @@ public class BidPlacedConsumer : BackgroundService
     private const string DlqQueue = "bidding.bidplaced.dlq";
     private const string DlqRoutingKey = "bid.placed.dlq";
 
-    private const int RetryDelayMs = 5000;   // 5s between attempts
-    private const int MaxRetries = 3;        // after 3 retries -> DLQ
+    private const int RetryDelayMs = 5000;
+    private const int MaxRetries = 3;
 
     public BidPlacedConsumer(
         IOptions<RabbitMqOptions> options,
@@ -44,7 +42,7 @@ public class BidPlacedConsumer : BackgroundService
         _scopeFactory = scopeFactory;
     }
 
-    public override Task StartAsync(CancellationToken cancellationToken)
+    public override async Task StartAsync(CancellationToken cancellationToken)
     {
         var factory = new ConnectionFactory
         {
@@ -53,41 +51,37 @@ public class BidPlacedConsumer : BackgroundService
             UserName = _options.User,
             Password = _options.Pass,
             VirtualHost = _options.VHost,
-            DispatchConsumersAsync = false,
             AutomaticRecoveryEnabled = true
         };
 
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        _connection = await factory.CreateConnectionAsync(cancellationToken);
+        _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
-        // Exchanges
-        _channel.ExchangeDeclare(MainExchange, ExchangeType.Topic, durable: true, autoDelete: false);
-        _channel.ExchangeDeclare(RetryExchange, ExchangeType.Topic, durable: true, autoDelete: false);
-        _channel.ExchangeDeclare(DlxExchange, ExchangeType.Topic, durable: true, autoDelete: false);
+        await _channel.ExchangeDeclareAsync(MainExchange, ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.ExchangeDeclareAsync(RetryExchange, ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.ExchangeDeclareAsync(DlxExchange, ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: cancellationToken);
 
-        // Main queue
-        _channel.QueueDeclare(MainQueue, durable: true, exclusive: false, autoDelete: false);
-        _channel.QueueBind(MainQueue, MainExchange, MainRoutingKey);
+        await _channel.QueueDeclareAsync(MainQueue, durable: true, exclusive: false, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.QueueBindAsync(MainQueue, MainExchange, MainRoutingKey, cancellationToken: cancellationToken);
 
-        // Retry queue: dead-letters back to main exchange after TTL
-        var retryArgs = new Dictionary<string, object>
+        var retryArgs = new Dictionary<string, object?>
         {
             ["x-message-ttl"] = RetryDelayMs,
             ["x-dead-letter-exchange"] = MainExchange,
             ["x-dead-letter-routing-key"] = MainRoutingKey
         };
-        _channel.QueueDeclare(RetryQueue, durable: true, exclusive: false, autoDelete: false, arguments: retryArgs);
-        _channel.QueueBind(RetryQueue, RetryExchange, RetryRoutingKey);
+        await _channel.QueueDeclareAsync(RetryQueue, durable: true, exclusive: false, autoDelete: false, arguments: retryArgs, cancellationToken: cancellationToken);
+        await _channel.QueueBindAsync(RetryQueue, RetryExchange, RetryRoutingKey, cancellationToken: cancellationToken);
 
-        // DLQ
-        _channel.QueueDeclare(DlqQueue, durable: true, exclusive: false, autoDelete: false);
-        _channel.QueueBind(DlqQueue, DlxExchange, DlqRoutingKey);
+        await _channel.QueueDeclareAsync(DlqQueue, durable: true, exclusive: false, autoDelete: false, cancellationToken: cancellationToken);
+        await _channel.QueueBindAsync(DlqQueue, DlxExchange, DlqRoutingKey, cancellationToken: cancellationToken);
 
-        _channel.BasicQos(0, 1, false);
+        await _channel.BasicQosAsync(0, 1, false, cancellationToken);
+
         _logger.LogInformation("BidPlacedConsumer connected to RabbitMQ {Host}:{Port}, vhost {VHost}",
             _options.Host, _options.Port, _options.VHost);
 
-        return base.StartAsync(cancellationToken);
+        await base.StartAsync(cancellationToken);
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
@@ -95,10 +89,18 @@ public class BidPlacedConsumer : BackgroundService
         if (_channel is null)
             throw new InvalidOperationException("RabbitMQ channel is not initialized.");
 
-        var consumer = new EventingBasicConsumer(_channel);
+        var consumer = new AsyncEventingBasicConsumer(_channel);
 
-        consumer.Received += async (_, ea) =>
+        consumer.ReceivedAsync += async (_, ea) =>
         {
+            var correlationId = GetCorrelationId(ea.BasicProperties) ?? Guid.NewGuid().ToString("N");
+
+            using var logScope = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["CorrelationId"] = correlationId,
+                ["MessageId"] = ea.BasicProperties?.MessageId ?? "(none)"
+            });
+
             try
             {
                 var json = Encoding.UTF8.GetString(ea.Body.ToArray());
@@ -111,20 +113,17 @@ public class BidPlacedConsumer : BackgroundService
                 var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
 
                 var alreadyProcessed = await db.ProcessedMessages
-                    .AnyAsync(x => x.MessageId == evt.MessageId);
+                    .AnyAsync(x => x.MessageId == evt.MessageId, stoppingToken);
 
                 if (alreadyProcessed)
                 {
                     _logger.LogInformation("Duplicate message skipped. MessageId={MessageId}", evt.MessageId);
-                    _channel.BasicAck(ea.DeliveryTag, false);
+                    await _channel.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
                     return;
                 }
 
-                // TODO: your actual side-effect here (read model update, etc.)
-                _logger.LogInformation("Processing message MessageId={MessageId}, BidId={BidId}", evt.MessageId, evt.BidId);
-
                 var read = await db.AuctionBidReadModels
-                    .FirstOrDefaultAsync(x => x.AuctionId == evt.AuctionId);
+                    .FirstOrDefaultAsync(x => x.AuctionId == evt.AuctionId, stoppingToken);
 
                 if (read is null)
                 {
@@ -149,15 +148,14 @@ public class BidPlacedConsumer : BackgroundService
                     read.UpdatedAtUtc = DateTime.UtcNow;
                 }
 
-                // mark message processed (idempotency)
                 db.ProcessedMessages.Add(new ProcessedMessage
                 {
                     MessageId = evt.MessageId,
                     ProcessedAtUtc = DateTime.UtcNow
                 });
 
-                await db.SaveChangesAsync();
-                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                await db.SaveChangesAsync(stoppingToken);
+                await _channel.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
             }
             catch (Exception ex)
             {
@@ -170,11 +168,13 @@ public class BidPlacedConsumer : BackgroundService
                     {
                         var retryProps = CreateRepublishProperties(ea.BasicProperties, nextRetry);
 
-                        _channel!.BasicPublish(
+                        await _channel!.BasicPublishAsync(
                             exchange: RetryExchange,
                             routingKey: RetryRoutingKey,
+                            mandatory: false,
                             basicProperties: retryProps,
-                            body: ea.Body);
+                            body: ea.Body,
+                            cancellationToken: stoppingToken);
 
                         _logger.LogWarning(ex,
                             "Processing failed. Message requeued to RETRY. RetryAttempt={RetryAttempt}/{MaxRetries}, DeliveryTag={DeliveryTag}",
@@ -184,19 +184,20 @@ public class BidPlacedConsumer : BackgroundService
                     {
                         var dlqProps = CreateRepublishProperties(ea.BasicProperties, currentRetry);
 
-                        _channel!.BasicPublish(
+                        await _channel!.BasicPublishAsync(
                             exchange: DlxExchange,
                             routingKey: DlqRoutingKey,
+                            mandatory: false,
                             basicProperties: dlqProps,
-                            body: ea.Body);
+                            body: ea.Body,
+                            cancellationToken: stoppingToken);
 
                         _logger.LogError(ex,
                             "Processing failed. Message sent to DLQ after max retries. Retries={Retries}, DeliveryTag={DeliveryTag}",
                             currentRetry, ea.DeliveryTag);
                     }
 
-                    // Ack original message because we safely republished it
-                    _channel!.BasicAck(ea.DeliveryTag, false);
+                    await _channel!.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
                 }
                 catch (Exception republishEx)
                 {
@@ -204,34 +205,34 @@ public class BidPlacedConsumer : BackgroundService
                         "Failed to republish message to retry/DLQ. Nack with requeue=true to avoid loss. DeliveryTag={DeliveryTag}",
                         ea.DeliveryTag);
 
-                    _channel!.BasicNack(ea.DeliveryTag, false, requeue: true);
+                    await _channel!.BasicNackAsync(ea.DeliveryTag, false, requeue: true, cancellationToken: stoppingToken);
                 }
             }
         };
 
-        _channel.BasicConsume(
+        _channel.BasicConsumeAsync(
             queue: MainQueue,
             autoAck: false,
-            consumer: consumer);
+            consumer: consumer,
+            cancellationToken: stoppingToken);
 
         _logger.LogInformation("BidPlacedConsumer started. Waiting for messages on queue '{Queue}'", MainQueue);
-
         return Task.CompletedTask;
     }
 
-    public override Task StopAsync(CancellationToken cancellationToken)
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
         try
         {
-            _channel?.Close();
-            _connection?.Close();
+            if (_channel is not null) await _channel.CloseAsync(cancellationToken);
+            if (_connection is not null) await _connection.CloseAsync(cancellationToken);
         }
         catch
         {
-            // ignore shutdown exceptions in dev step
+            // ignore shutdown exceptions
         }
 
-        return base.StopAsync(cancellationToken);
+        await base.StopAsync(cancellationToken);
     }
 
     public override void Dispose()
@@ -240,9 +241,23 @@ public class BidPlacedConsumer : BackgroundService
         _connection?.Dispose();
         base.Dispose();
     }
-    private static int GetRetryCount(IBasicProperties props)
+
+    private static string? GetCorrelationId(IReadOnlyBasicProperties? props)
     {
-        if (props.Headers is null) return 0;
+        if (props?.Headers is null) return null;
+        if (!props.Headers.TryGetValue("x-correlation-id", out var raw) || raw is null) return null;
+
+        return raw switch
+        {
+            byte[] b => Encoding.UTF8.GetString(b),
+            string s => s,
+            _ => raw.ToString()
+        };
+    }
+
+    private static int GetRetryCount(IReadOnlyBasicProperties? props)
+    {
+        if (props?.Headers is null) return 0;
         if (!props.Headers.TryGetValue("x-retry-count", out var raw) || raw is null) return 0;
 
         return raw switch
@@ -258,13 +273,10 @@ public class BidPlacedConsumer : BackgroundService
         };
     }
 
-    private IBasicProperties CreateRepublishProperties(IBasicProperties? sourceProps, int retryCount)
+    private static BasicProperties CreateRepublishProperties(IReadOnlyBasicProperties? sourceProps, int retryCount)
     {
-        var props = _channel!.CreateBasicProperties();
-        props.Persistent = true;
-        props.ContentType = sourceProps?.ContentType ?? "application/json";
+        var headers = new Dictionary<string, object?>();
 
-        var headers = new Dictionary<string, object>();
         if (sourceProps?.Headers is not null)
         {
             foreach (var kv in sourceProps.Headers)
@@ -273,8 +285,14 @@ public class BidPlacedConsumer : BackgroundService
 
         headers["x-retry-count"] = retryCount;
         headers["x-error-at"] = DateTime.UtcNow.ToString("O");
-        props.Headers = headers;
 
-        return props;
+        return new BasicProperties
+        {
+            Persistent = true,
+            ContentType = sourceProps?.ContentType ?? "application/json",
+            MessageId = sourceProps?.MessageId,
+            CorrelationId = sourceProps?.CorrelationId,
+            Headers = headers
+        };
     }
 }

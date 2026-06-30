@@ -5,15 +5,25 @@ using DairyBidding.BiddingService.Messaging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using RabbitMQ.Client;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Exporter;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 
 // Add services to the container.
 builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection("RabbitMQ"));
-builder.Services.AddSingleton<IBidPlacedPublisher, BidPlacedPublisher>();
+
+builder.Services.AddSingleton<BidPlacedPublisher>();
+builder.Services.AddSingleton<IBidPlacedPublisher>(sp => sp.GetRequiredService<BidPlacedPublisher>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BidPlacedPublisher>());
+
 builder.Services.AddHostedService<BidPlacedConsumer>();
+
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -45,14 +55,82 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+var defaultConnection = builder.Configuration.GetConnectionString("Postgres");
+if (string.IsNullOrWhiteSpace(defaultConnection))
+    throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
 
+builder.Services
+    .AddHealthChecks()
+    .AddNpgSql(
+        defaultConnection,
+        name: "postgres",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: new[] { "ready" })
+    .AddRabbitMQ(
+        sp =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var factory = new ConnectionFactory
+            {
+                HostName = cfg["RabbitMQ:Host"],
+                Port = int.TryParse(cfg["RabbitMQ:Port"], out var p) ? p : 5672,
+                UserName = cfg["RabbitMQ:User"],
+                Password = cfg["RabbitMQ:Pass"],
+                VirtualHost = cfg["RabbitMQ:VHost"] ?? "/"
+            };
+
+            return factory.CreateConnectionAsync();
+        },
+        name: "rabbitmq",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: new[] { "ready" });
+
+        builder.Services.AddOpenTelemetry()
+        .WithTracing(tracing =>
+        {
+            tracing
+                .SetResourceBuilder(
+                    ResourceBuilder.CreateDefault()
+                        .AddService("dairy-bidding-service"))
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddEntityFrameworkCoreInstrumentation()
+                .AddOtlpExporter(otlp =>
+                {
+                    // Jaeger OTLP gRPC (typical local setup)
+                    otlp.Endpoint = new Uri("http://localhost:4317");
+                    otlp.Protocol = OtlpExportProtocol.Grpc;
+                });
+    });
 var app = builder.Build();
 
+app.Use(async (context, next) =>
+{
+    const string header = "X-Correlation-ID";
+
+    var correlationId = context.Request.Headers.TryGetValue(header, out var incoming) &&
+                        !string.IsNullOrWhiteSpace(incoming)
+        ? incoming.ToString()
+        : Guid.NewGuid().ToString("N");
+
+    context.Items[header] = correlationId;
+    context.Response.Headers[header] = correlationId;
+
+    using (app.Logger.BeginScope(new Dictionary<string, object>
+    {
+        ["CorrelationId"] = correlationId
+    }))
+    {
+        await next();
+    }
+});
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-} else {
+}
+else
+{
     app.UseHttpsRedirection();
 }
 app.UseAuthentication();
@@ -65,7 +143,52 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "bidding" }));
+// Highest bid snapshot from read model
+app.MapGet("/auctions/{auctionId}/highest-bid", async (string auctionId, BiddingDbContext db) =>
+{
+    var read = await db.AuctionBidReadModels
+        .AsNoTracking()
+        .FirstOrDefaultAsync(x => x.AuctionId == auctionId);
 
+    if (read is null)
+        return Results.NotFound(new { Message = $"No bids found for auction '{auctionId}'." });
+
+    return Results.Ok(new
+    {
+        read.AuctionId,
+        read.HighestBidAmount,
+        read.HighestBidderId,
+        read.TotalBids,
+        read.UpdatedAtUtc
+    });
+});
+
+// Bid history from write table
+app.MapGet("/auctions/{auctionId}/bids", async (string auctionId, BiddingDbContext db) =>
+{
+    var bids = await db.Bids
+        .AsNoTracking()
+        .Where(x => x.AuctionId == auctionId)
+        .OrderByDescending(x => x.CreatedAtUtc)
+        .Select(x => new
+        {
+            x.Id,
+            x.AuctionId,
+            x.BidderId,
+            x.Amount,
+            x.CreatedAtUtc
+        })
+        .ToListAsync();
+
+    return Results.Ok(new
+    {
+        AuctionId = auctionId,
+        Count = bids.Count,
+        Items = bids
+    });
+});
+app.MapHealthChecks("/health/live");
+app.MapHealthChecks("/health/ready");
 app.MapPost("/bids", async (
     HttpContext http,
     PlaceBidRequest request,
@@ -143,7 +266,8 @@ app.MapPost("/bids", async (
     bid.Amount,
     bid.CreatedAtUtc
 );
-    publisher.Publish(evt);
+    var correlationId = http.Items["X-Correlation-ID"]?.ToString();
+    await publisher.PublishAsync(evt, correlationId, http.RequestAborted);
 
     return Results.Ok(new
     {
