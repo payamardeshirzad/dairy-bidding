@@ -36,6 +36,7 @@ public class BiddingDbContext : DbContext
         
         modelBuilder.Entity<AuctionBidReadModel>(e =>
         {
+            e.ToTable("auction_bid_read_models");
             e.HasKey(x => x.AuctionId);
             e.Property(x => x.AuctionId).HasMaxLength(100);
             e.Property(x => x.HighestBidAmount).HasPrecision(18, 2);

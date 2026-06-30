@@ -1,9 +1,14 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,9 +33,36 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(allowedOrigins)
               .WithMethods("GET", "POST", "OPTIONS")
-              .WithHeaders("Authorization", "Content-Type", "Idempotency-Key");
+              .WithHeaders("Authorization", "Content-Type");
     });
 });
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("token-endpoint", limiter =>
+    {
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.PermitLimit = 10;
+        limiter.QueueLimit = 0;
+        limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing
+            .SetResourceBuilder(
+                ResourceBuilder.CreateDefault()
+                    .AddService("dairy-identity-service"))
+            .AddAspNetCoreInstrumentation()
+            .AddOtlpExporter(otlp =>
+            {
+                otlp.Endpoint = new Uri(builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317");
+                otlp.Protocol = OtlpExportProtocol.Grpc;
+            });
+    });
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -61,11 +93,15 @@ app.UseCors("Frontend");
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "identity" }));
 
 app.MapPost("/auth/token", (LoginRequest request) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest("Username and password are required.");
+
     // Dev-only credential check
     if (request.Username != "admin" || request.Password != "admin123")
         return Results.Unauthorized();
@@ -92,7 +128,7 @@ app.MapPost("/auth/token", (LoginRequest request) =>
     var jwt = new JwtSecurityTokenHandler().WriteToken(token);
 
     return Results.Ok(new TokenResponse(jwt, "Bearer", expires));
-});
+}).RequireRateLimiting("token-endpoint");
 
 app.MapGet("/auth/me", (ClaimsPrincipal user) =>
 {

@@ -78,7 +78,7 @@ export default function App() {
             <form onSubmit={onPlaceBid} className="bg-slate-900 p-4 rounded-xl space-y-3">
               <h2 className="font-semibold">Place Bid</h2>
               <input className="w-full p-2 rounded bg-slate-800" value={auctionId} onChange={e => setAuctionId(e.target.value)} placeholder="Auction ID" required />
-              <input className="w-full p-2 rounded bg-slate-800" type="number" step="0.01" value={amount} onChange={e => setAmount(Number(e.target.value))} placeholder="Amount" required />
+              <input className="w-full p-2 rounded bg-slate-800" type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(Number(e.target.value))} placeholder="Amount" required />
               <input className="w-full p-2 rounded bg-slate-800" value={idempotencyKey} onChange={e => setIdempotencyKey(e.target.value)} placeholder="Idempotency Key" required />
               <button className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500" type="submit">Submit Bid</button>
             </form>

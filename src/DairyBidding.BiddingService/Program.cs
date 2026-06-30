@@ -83,10 +83,10 @@ builder.Services
             var cfg = sp.GetRequiredService<IConfiguration>();
             var factory = new ConnectionFactory
             {
-                HostName = cfg["RabbitMQ:Host"],
+                HostName = cfg["RabbitMQ:Host"] ?? "localhost",
                 Port = int.TryParse(cfg["RabbitMQ:Port"], out var p) ? p : 5672,
-                UserName = cfg["RabbitMQ:User"],
-                Password = cfg["RabbitMQ:Pass"],
+                UserName = cfg["RabbitMQ:User"] ?? "guest",
+                Password = cfg["RabbitMQ:Pass"] ?? "guest",
                 VirtualHost = cfg["RabbitMQ:VHost"] ?? "/"
             };
 
@@ -108,8 +108,7 @@ builder.Services
                 .AddEntityFrameworkCoreInstrumentation()
                 .AddOtlpExporter(otlp =>
                 {
-                    // Jaeger OTLP gRPC (typical local setup)
-                    otlp.Endpoint = new Uri("http://localhost:4317");
+                    otlp.Endpoint = new Uri(builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317");
                     otlp.Protocol = OtlpExportProtocol.Grpc;
                 });
     });
@@ -212,6 +211,12 @@ app.MapPost("/bids", async (
 {
     var bidderId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
 
+    if (string.IsNullOrWhiteSpace(request.AuctionId))
+        return Results.BadRequest("AuctionId cannot be empty.");
+
+    if (request.Amount <= 0)
+        return Results.BadRequest("Amount must be greater than zero.");
+
     if (!http.Request.Headers.TryGetValue("Idempotency-Key", out var keyValues))
         return Results.BadRequest("Missing Idempotency-Key header.");
 
@@ -247,7 +252,8 @@ app.MapPost("/bids", async (
         CreatedAtUtc = DateTime.UtcNow,
         IdempotencyKey = idempotencyKey
     };
-    Console.WriteLine($"Placing bid: AuctionId={bid.AuctionId}, BidderId={bid.BidderId}, Amount={bid.Amount}, CreatedAtUtc={bid.CreatedAtUtc}");
+    app.Logger.LogInformation("Placing bid: AuctionId={AuctionId}, BidderId={BidderId}, Amount={Amount}, CreatedAtUtc={CreatedAtUtc}",
+        bid.AuctionId, bid.BidderId, bid.Amount, bid.CreatedAtUtc);
     db.Bids.Add(bid);
     try
     {
@@ -297,5 +303,6 @@ app.MapPost("/bids", async (
 app.Run();
 
 record PlaceBidRequest(string AuctionId, decimal Amount);
-// for WebApplicationFactory in integration tests
+
+// Required for WebApplicationFactory<Program> in integration tests
 public partial class Program { }
