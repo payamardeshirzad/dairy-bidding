@@ -8,6 +8,7 @@ public class BiddingDbContext : DbContext
 
     public DbSet<Bid> Bids => Set<Bid>();
     public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
+    public DbSet<AuctionBidReadModel> AuctionBidReadModels => Set<AuctionBidReadModel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -31,6 +32,14 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.Id).HasColumnName("id");
             e.Property(x => x.MessageId).HasColumnName("messageid").HasMaxLength(100).IsRequired();
             e.Property(x => x.ProcessedAtUtc).HasColumnName("processedatutc").IsRequired();
+        });
+        
+        modelBuilder.Entity<AuctionBidReadModel>(e =>
+        {
+            e.HasKey(x => x.AuctionId);
+            e.Property(x => x.AuctionId).HasMaxLength(100);
+            e.Property(x => x.HighestBidAmount).HasPrecision(18, 2);
+            e.Property(x => x.HighestBidderId).IsRequired().HasMaxLength(100);
         });
     }
 }

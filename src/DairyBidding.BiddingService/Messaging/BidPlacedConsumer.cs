@@ -119,10 +119,37 @@ public class BidPlacedConsumer : BackgroundService
                     _channel.BasicAck(ea.DeliveryTag, false);
                     return;
                 }
-                
+
                 // TODO: your actual side-effect here (read model update, etc.)
                 _logger.LogInformation("Processing message MessageId={MessageId}, BidId={BidId}", evt.MessageId, evt.BidId);
 
+                var read = await db.AuctionBidReadModels
+                    .FirstOrDefaultAsync(x => x.AuctionId == evt.AuctionId);
+
+                if (read is null)
+                {
+                    read = new AuctionBidReadModel
+                    {
+                        AuctionId = evt.AuctionId,
+                        HighestBidAmount = evt.Amount,
+                        HighestBidderId = evt.BidderId,
+                        TotalBids = 1,
+                        UpdatedAtUtc = DateTime.UtcNow
+                    };
+                    db.AuctionBidReadModels.Add(read);
+                }
+                else
+                {
+                    read.TotalBids += 1;
+                    if (evt.Amount > read.HighestBidAmount)
+                    {
+                        read.HighestBidAmount = evt.Amount;
+                        read.HighestBidderId = evt.BidderId;
+                    }
+                    read.UpdatedAtUtc = DateTime.UtcNow;
+                }
+
+                // mark message processed (idempotency)
                 db.ProcessedMessages.Add(new ProcessedMessage
                 {
                     MessageId = evt.MessageId,
