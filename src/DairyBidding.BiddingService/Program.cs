@@ -36,6 +36,17 @@ var audience = jwtSection["Audience"] ?? "dairy-bidding-api";
 var signingKey = jwtSection["SigningKey"] ?? "THIS_IS_DEV_ONLY_CHANGE_ME_1234567890";
 
 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .WithMethods("GET", "POST", "OPTIONS")
+              .WithHeaders("Authorization", "Content-Type", "Idempotency-Key");
+    });
+});
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -124,6 +135,9 @@ app.Use(async (context, next) =>
         await next();
     }
 });
+
+app.UseCors("Frontend");
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
