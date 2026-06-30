@@ -283,3 +283,5 @@ app.MapPost("/bids", async (
 app.Run();
 
 record PlaceBidRequest(string AuctionId, decimal Amount);
+// for WebApplicationFactory in integration tests
+public partial class Program { }

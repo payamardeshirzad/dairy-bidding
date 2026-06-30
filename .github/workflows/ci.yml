@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build, Unit, Integration, Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Format check (dotnet format)
+        run: dotnet format --verify-no-changes --verbosity minimal
+        continue-on-error: true
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Run unit tests (with coverage)
+        run: |
+          dotnet test --no-build -c Release \
+            --filter "FullyQualifiedName!~IntegrationTests" \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=unit-tests.trx"
+
+      - name: Run integration tests
+        run: |
+          dotnet test tests/DairyBidding.BiddingService.IntegrationTests/DairyBidding.BiddingService.IntegrationTests.csproj \
+            --no-build -c Release \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=integration-tests.trx"
+
+      - name: Install ReportGenerator
+        if: always()
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Merge coverage reports
+        if: always()
+        run: |
+          reportgenerator \
+            "-reports:**/coverage.cobertura.xml" \
+            "-targetdir:coveragereport" \
+            "-reporttypes:HtmlInline;Cobertura"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/*.trx
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coveragereport/**
+            **/coverage.cobertura.xml
