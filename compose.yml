@@ -140,7 +140,20 @@ services:
       timeout: 10s
       retries: 15
     restart: unless-stopped
-
+  
+  dairy-bidding-web:
+    build:
+      context: ./src/dairy-bidding-web
+      dockerfile: Dockerfile
+      args:
+        VITE_IDENTITY_BASE_URL: http://localhost:5245
+        VITE_BIDDING_BASE_URL: http://localhost:5170
+        VITE_AUTH_STORAGE_MODE: localStorage
+    image: dairy-bidding-web:v0.1.0
+    container_name: dairy-bidding-web
+    ports:
+      - "5173:80"
+    restart: unless-stopped
 volumes:
   pg_data:
   redis_data:

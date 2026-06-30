@@ -20,6 +20,18 @@ var expiryMinutes = jwtSection.GetValue<int?>("ExpiryMinutes") ?? 120;
 
 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
 
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .WithMethods("GET", "POST", "OPTIONS")
+              .WithHeaders("Authorization", "Content-Type", "Idempotency-Key");
+    });
+});
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -45,6 +57,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseCors("Frontend");
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();

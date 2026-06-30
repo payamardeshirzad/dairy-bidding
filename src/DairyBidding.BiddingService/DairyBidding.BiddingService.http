@@ -1,6 +1,2 @@
 @DairyBidding.BiddingService_HostAddress = http://localhost:5170
-
-GET {{DairyBidding.BiddingService_HostAddress}}/weatherforecast/
-Accept: application/json
-
 ###
