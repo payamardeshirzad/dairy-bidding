@@ -197,3 +197,56 @@ These were the key issues encountered/considered during setup:
 ✅ All infrastructure services started successfully with Podman  
 ✅ Commands and service verification checks passed  
 ✅ Environment is ready for implementation planning
+
+---
+
+## 9) .NET service secrets (dotnet user-secrets)
+
+The .NET services use `dotnet user-secrets` to keep sensitive configuration off disk and out of source control. Secrets are stored locally at `%APPDATA%\Microsoft\UserSecrets\{id}\secrets.json` and are never committed to git.
+
+Run the commands below from the repository root after cloning.
+
+### IdentityService
+
+```powershell
+cd src/DairyBidding.IdentityService
+
+dotnet user-secrets set "Jwt:SigningKey"             "DairyBidding-Dev-2026-JwtKey!XK9mP3vTn8sRqL5hWjYcEu6FoId"
+dotnet user-secrets set "Identity:AdminPassword"     "admin123"
+dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=identity_db;Username=dairy_admin;Password=dairy_local_pass"
+```
+
+### AuctionService
+
+```powershell
+cd ../DairyBidding.AuctionService
+
+dotnet user-secrets set "Jwt:SigningKey"             "DairyBidding-Dev-2026-JwtKey!XK9mP3vTn8sRqL5hWjYcEu6FoId"
+dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=auction_db;Username=dairy_admin;Password=dairy_local_pass"
+dotnet user-secrets set "RabbitMQ:User"              "dairy"
+dotnet user-secrets set "RabbitMQ:Pass"              "dairy_local_pass"
+```
+
+### BiddingService
+
+```powershell
+cd ../DairyBidding.BiddingService
+
+dotnet user-secrets set "Jwt:SigningKey"             "DairyBidding-Dev-2026-JwtKey!XK9mP3vTn8sRqL5hWjYcEu6FoId"
+dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=bidding_db;Username=dairy_admin;Password=dairy_local_pass"
+dotnet user-secrets set "RabbitMQ:User"              "dairy"
+dotnet user-secrets set "RabbitMQ:Pass"              "dairy_local_pass"
+```
+
+### Verify secrets are set
+
+```powershell
+# Run inside each service directory
+dotnet user-secrets list
+```
+
+### Notes
+
+- The **JWT signing key** must be identical across all three services — they all validate tokens issued by IdentityService.
+- `Identity:AdminPassword` seeds the initial `admin` user on first startup. Login: `admin` / `admin123`.
+- These are **development-only** values. Never use them in staging or production.
