@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using FluentAssertions;
-using Npgsql;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
@@ -21,30 +20,28 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
     [Fact]
     public async Task HappyPath_PlaceBid_Published_Consumed_ReadModelUpdated()
     {
-        var token = JwtTestToken.Create(); // helper below
+        var token = JwtTestToken.Create();
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         _client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
 
-        var auctionId = $"AUC-{Guid.NewGuid():N}";
-        var payload = new { auctionId, amount = 120.50m };
+        var payload = new { auctionId = BiddingApiFactory.TestAuctionId, amount = 120.50m };
 
         var res = await _client.PostAsJsonAsync("/bids", payload);
         res.EnsureSuccessStatusCode();
 
-        // eventual consistency wait
-        var ok = false;
-        for (var i = 0; i < 20; i++)
-        {
-            await Task.Delay(500);
-            var read = await _client.GetAsync($"/auctions/{auctionId}/highest-bid");
-            if (read.IsSuccessStatusCode)
+        // Poll until read model reflects the bid (eventual consistency)
+        var read = await PollUntilAsync(
+            async () =>
             {
-                ok = true;
-                break;
-            }
-        }
+                var r = await _client.GetAsync($"/auctions/{BiddingApiFactory.TestAuctionId}/highest-bid");
+                if (!r.IsSuccessStatusCode) return null;
+                var json = await r.Content.ReadFromJsonAsync<JsonDocument>();
+                var amount = json?.RootElement.GetProperty("highestBidAmount").GetDecimal();
+                return amount > 0 ? json : null;
+            },
+            attempts: 20, delayMs: 500);
 
-        ok.Should().BeTrue("read model should be updated by consumer");
+        read.Should().NotBeNull("read model should be updated by consumer within 10 seconds");
     }
 
     [Fact]
@@ -54,8 +51,7 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var idem = Guid.NewGuid().ToString("N");
-        var auctionId = $"AUC-{Guid.NewGuid():N}";
-        var payload = new { auctionId, amount = 99m };
+        var payload = new { auctionId = BiddingApiFactory.TestAuctionId, amount = 99m };
 
         _client.DefaultRequestHeaders.Remove("Idempotency-Key");
         _client.DefaultRequestHeaders.Add("Idempotency-Key", idem);
@@ -67,8 +63,9 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
         var r2 = await _client.PostAsJsonAsync("/bids", payload);
         r2.EnsureSuccessStatusCode();
 
-        var body2 = await r2.Content.ReadAsStringAsync();
-        body2.Should().Contain("\"deduplicated\":true", because: "second request should be deduplicated");    
+        var body2 = await r2.Content.ReadFromJsonAsync<JsonDocument>();
+        body2!.RootElement.GetProperty("deduplicated").GetBoolean()
+            .Should().BeTrue("second request should be deduplicated");
     }
 
     [Fact]
@@ -80,7 +77,7 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
             Port = _factory.RabbitPort,
             UserName = _factory.RabbitUser,
             Password = _factory.RabbitPass,
-            VirtualHost = _factory.RabbitVHost
+            VirtualHost = _factory.RabbitVHost,
         };
 
         await using var conn = await factory.CreateConnectionAsync();
@@ -100,5 +97,16 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
 
         var result = await ch.QueueDeclarePassiveAsync("bidding.bidplaced.dlq");
         result.MessageCount.Should().BeGreaterThan(0);
+    }
+
+    private static async Task<T?> PollUntilAsync<T>(Func<Task<T?>> check, int attempts, int delayMs) where T : class
+    {
+        for (var i = 0; i < attempts; i++)
+        {
+            await Task.Delay(delayMs);
+            var result = await check();
+            if (result is not null) return result;
+        }
+        return null;
     }
 }

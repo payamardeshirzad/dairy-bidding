@@ -1,6 +1,3 @@
-﻿namespace DairyBidding.Contracts;
-
-public class Class1
-{
-
-}
+﻿// This file is intentionally left empty.
+// Event contracts are in the Events/ folder.
+namespace DairyBidding.Contracts;

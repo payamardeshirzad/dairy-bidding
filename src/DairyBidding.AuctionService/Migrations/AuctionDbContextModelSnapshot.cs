@@ -31,7 +31,7 @@ namespace DairyBidding.AuctionService.Migrations
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("createdatutc");
+                        .HasColumnName("created_at_utc");
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -41,15 +41,15 @@ namespace DairyBidding.AuctionService.Migrations
 
                     b.Property<DateTime>("EndsAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("endsat");
+                        .HasColumnName("ends_at");
 
                     b.Property<decimal>("StartingPrice")
                         .HasColumnType("numeric(18,2)")
-                        .HasColumnName("startingprice");
+                        .HasColumnName("starting_price");
 
                     b.Property<DateTime>("StartsAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("startsat");
+                        .HasColumnName("starts_at");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer")
@@ -61,7 +61,8 @@ namespace DairyBidding.AuctionService.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("title");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id")
+                        .HasName("pk_auctions");
 
                     b.ToTable("auctions", (string)null);
                 });

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using DairyBidding.Contracts.Events;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 
