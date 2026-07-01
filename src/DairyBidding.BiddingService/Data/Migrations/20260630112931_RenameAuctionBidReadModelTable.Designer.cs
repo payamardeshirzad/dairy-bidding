@@ -3,6 +3,7 @@ using System;
 using DairyBidding.BiddingService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DairyBidding.BiddingService.Data.Migrations
 {
     [DbContext(typeof(BiddingDbContext))]
-    partial class BiddingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260630112931_RenameAuctionBidReadModelTable")]
+    partial class RenameAuctionBidReadModelTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -46,42 +49,6 @@ namespace DairyBidding.BiddingService.Data.Migrations
                     b.HasKey("AuctionId");
 
                     b.ToTable("auction_bid_read_models", (string)null);
-                });
-
-            modelBuilder.Entity("DairyBidding.BiddingService.Data.AuctionReadModel", b =>
-                {
-                    b.Property<string>("AuctionId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("auctionid");
-
-                    b.Property<DateTime>("EndsAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("endsat");
-
-                    b.Property<DateTime>("StartsAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("startsat");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasColumnName("status");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("title");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updatedatutc");
-
-                    b.HasKey("AuctionId");
-
-                    b.ToTable("auction_read_models", (string)null);
                 });
 
             modelBuilder.Entity("DairyBidding.BiddingService.Data.Bid", b =>

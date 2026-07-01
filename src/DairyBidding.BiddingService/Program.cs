@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IBidPlacedPublisher>(sp => sp.GetRequiredService<B
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BidPlacedPublisher>());
 
 builder.Services.AddHostedService<BidPlacedConsumer>();
+builder.Services.AddHostedService<AuctionStatusChangedConsumer>();
 
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -83,10 +84,10 @@ builder.Services
             var cfg = sp.GetRequiredService<IConfiguration>();
             var factory = new ConnectionFactory
             {
-                HostName = cfg["RabbitMQ:Host"],
+                HostName = cfg["RabbitMQ:Host"] ?? "localhost",
                 Port = int.TryParse(cfg["RabbitMQ:Port"], out var p) ? p : 5672,
-                UserName = cfg["RabbitMQ:User"],
-                Password = cfg["RabbitMQ:Pass"],
+                UserName = cfg["RabbitMQ:User"] ?? "guest",
+                Password = cfg["RabbitMQ:Pass"] ?? "guest",
                 VirtualHost = cfg["RabbitMQ:VHost"] ?? "/"
             };
 
@@ -108,8 +109,7 @@ builder.Services
                 .AddEntityFrameworkCoreInstrumentation()
                 .AddOtlpExporter(otlp =>
                 {
-                    // Jaeger OTLP gRPC (typical local setup)
-                    otlp.Endpoint = new Uri("http://localhost:4317");
+                    otlp.Endpoint = new Uri(builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317");
                     otlp.Protocol = OtlpExportProtocol.Grpc;
                 });
     });
@@ -165,7 +165,14 @@ app.MapGet("/auctions/{auctionId}/highest-bid", async (string auctionId, Bidding
         .FirstOrDefaultAsync(x => x.AuctionId == auctionId);
 
     if (read is null)
-        return Results.NotFound(new { Message = $"No bids found for auction '{auctionId}'." });
+        return Results.Ok(new
+        {
+            AuctionId = auctionId,
+            HighestBidAmount = (decimal?)null,
+            HighestBidderId = (string?)null,
+            TotalBids = 0,
+            UpdatedAtUtc = (DateTime?)null
+        });
 
     return Results.Ok(new
     {
@@ -212,6 +219,24 @@ app.MapPost("/bids", async (
 {
     var bidderId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
 
+    if (string.IsNullOrWhiteSpace(request.AuctionId))
+        return Results.BadRequest("AuctionId cannot be empty.");
+
+    if (request.Amount <= 0)
+        return Results.BadRequest("Amount must be greater than zero.");
+
+    // Validate auction is active in local read model
+    var now = DateTime.UtcNow;
+    var auctionState = await db.AuctionReadModels
+        .AsNoTracking()
+        .FirstOrDefaultAsync(a => a.AuctionId == request.AuctionId);
+
+    if (auctionState is null)
+        return Results.NotFound(new { Message = $"Auction '{request.AuctionId}' not found." });
+
+    if (auctionState.Status != "Active" || auctionState.EndsAt < now)
+        return Results.Conflict(new { Message = $"Auction '{request.AuctionId}' is not accepting bids." });
+
     if (!http.Request.Headers.TryGetValue("Idempotency-Key", out var keyValues))
         return Results.BadRequest("Missing Idempotency-Key header.");
 
@@ -247,7 +272,8 @@ app.MapPost("/bids", async (
         CreatedAtUtc = DateTime.UtcNow,
         IdempotencyKey = idempotencyKey
     };
-    Console.WriteLine($"Placing bid: AuctionId={bid.AuctionId}, BidderId={bid.BidderId}, Amount={bid.Amount}, CreatedAtUtc={bid.CreatedAtUtc}");
+    app.Logger.LogInformation("Placing bid: AuctionId={AuctionId}, BidderId={BidderId}, Amount={Amount}, CreatedAtUtc={CreatedAtUtc}",
+        bid.AuctionId, bid.BidderId, bid.Amount, bid.CreatedAtUtc);
     db.Bids.Add(bid);
     try
     {
@@ -297,5 +323,6 @@ app.MapPost("/bids", async (
 app.Run();
 
 record PlaceBidRequest(string AuctionId, decimal Amount);
-// for WebApplicationFactory in integration tests
+
+// Required for WebApplicationFactory<Program> in integration tests
 public partial class Program { }

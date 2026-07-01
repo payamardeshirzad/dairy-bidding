@@ -140,14 +140,29 @@ services:
       timeout: 10s
       retries: 15
     restart: unless-stopped
-  
+
+  pgadmin:
+    image: docker.io/dpage/pgadmin4:latest
+    container_name: dairy-pgadmin
+    user: root
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   dairy-bidding-web:
     build:
       context: ./src/dairy-bidding-web
       dockerfile: Dockerfile
       args:
-        VITE_IDENTITY_BASE_URL: http://localhost:5245
-        VITE_BIDDING_BASE_URL: http://localhost:5170
+        VITE_GATEWAY_BASE_URL: http://localhost:5000
         VITE_AUTH_STORAGE_MODE: localStorage
     image: dairy-bidding-web:v0.1.0
     container_name: dairy-bidding-web
@@ -156,6 +171,7 @@ services:
     restart: unless-stopped
 volumes:
   pg_data:
+  pgadmin_data:
   redis_data:
   rabbitmq_data:
   minio_data:

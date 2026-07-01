@@ -13,13 +13,16 @@ export async function http<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   const response = await fetch(input, { ...init, headers });
 
   if (response.status === 401) {
+    const wwwAuth = response.headers.get('WWW-Authenticate');
+    const errBody = await response.text().catch(() => '');
+    console.error('[401 debug] WWW-Authenticate:', wwwAuth, '| body:', errBody);
     tokenStore.clear();
     throw new Error('Unauthorized. Please log in again.');
   }
 
   if (!response.ok) {
     const txt = await response.text();
-    throw new Error(txt || `HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}: ${txt || response.statusText}`);
   }
 
   if (response.status === 204) return {} as T;
