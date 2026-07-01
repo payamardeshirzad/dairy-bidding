@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IBidPlacedPublisher>(sp => sp.GetRequiredService<B
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BidPlacedPublisher>());
 
 builder.Services.AddHostedService<BidPlacedConsumer>();
+builder.Services.AddHostedService<AuctionStatusChangedConsumer>();
 
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -164,7 +165,14 @@ app.MapGet("/auctions/{auctionId}/highest-bid", async (string auctionId, Bidding
         .FirstOrDefaultAsync(x => x.AuctionId == auctionId);
 
     if (read is null)
-        return Results.NotFound(new { Message = $"No bids found for auction '{auctionId}'." });
+        return Results.Ok(new
+        {
+            AuctionId = auctionId,
+            HighestBidAmount = (decimal?)null,
+            HighestBidderId = (string?)null,
+            TotalBids = 0,
+            UpdatedAtUtc = (DateTime?)null
+        });
 
     return Results.Ok(new
     {
@@ -216,6 +224,18 @@ app.MapPost("/bids", async (
 
     if (request.Amount <= 0)
         return Results.BadRequest("Amount must be greater than zero.");
+
+    // Validate auction is active in local read model
+    var now = DateTime.UtcNow;
+    var auctionState = await db.AuctionReadModels
+        .AsNoTracking()
+        .FirstOrDefaultAsync(a => a.AuctionId == request.AuctionId);
+
+    if (auctionState is null)
+        return Results.NotFound(new { Message = $"Auction '{request.AuctionId}' not found." });
+
+    if (auctionState.Status != "Active" || auctionState.EndsAt < now)
+        return Results.Conflict(new { Message = $"Auction '{request.AuctionId}' is not accepting bids." });
 
     if (!http.Request.Headers.TryGetValue("Idempotency-Key", out var keyValues))
         return Results.BadRequest("Missing Idempotency-Key header.");

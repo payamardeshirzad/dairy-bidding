@@ -9,6 +9,7 @@ public class BiddingDbContext : DbContext
     public DbSet<Bid> Bids => Set<Bid>();
     public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
     public DbSet<AuctionBidReadModel> AuctionBidReadModels => Set<AuctionBidReadModel>();
+    public DbSet<AuctionReadModel> AuctionReadModels => Set<AuctionReadModel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +42,17 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.AuctionId).HasMaxLength(100);
             e.Property(x => x.HighestBidAmount).HasPrecision(18, 2);
             e.Property(x => x.HighestBidderId).IsRequired().HasMaxLength(100);
+        });
+        modelBuilder.Entity<AuctionReadModel>(e =>
+        {
+            e.ToTable("auction_read_models");
+            e.HasKey(x => x.AuctionId);
+            e.Property(x => x.AuctionId).HasColumnName("auctionid").HasMaxLength(100);
+            e.Property(x => x.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).IsRequired();
+            e.Property(x => x.StartsAt).HasColumnName("startsat").IsRequired();
+            e.Property(x => x.EndsAt).HasColumnName("endsat").IsRequired();
+            e.Property(x => x.UpdatedAtUtc).HasColumnName("updatedatutc").IsRequired();
         });
     }
 }
