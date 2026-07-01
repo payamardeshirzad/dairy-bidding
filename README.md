@@ -1,199 +1,238 @@
-# Local Environment Setup (Podman)
+﻿# Dairy Bidding Platform — Local Dev Setup
 
-This document describes how to run the full local infrastructure for the Dairy Bidding platform using **Podman** (no Docker required).
+Full guide for running the platform locally in development mode.
+
+> Infrastructure (Postgres, RabbitMQ, Redis, etc.) runs in **Podman** containers.  
+> The four .NET services run directly on the host via `dotnet run`.
 
 ---
 
-## 1) Prerequisites
+## Architecture & ports
 
-- **Podman** installed and working
-- **Podman Compose** available (`podman compose ...`)
-- Windows Terminal / PowerShell (or equivalent shell)
-- Ports available on localhost:
-  - `5432` (PostgreSQL)
-  - `6379` (Redis)
-  - `5672`, `15672` (RabbitMQ + UI)
-  - `9000`, `9001` (MinIO API + Console)
-  - `8025`, `1025` (Mailpit UI + SMTP)
-  - `9090` (Prometheus)
-  - `3000` (Grafana)
-  - `16686`, `4317`, `4318` (Jaeger UI + OTLP)
-  - `9200`, `9300` (Elasticsearch)
+| Component | Technology | Dev port |
+|---|---|---|
+| Frontend | React 19 + nginx (Podman) / Vite dev server | 5173 |
+| API Gateway | ASP.NET Core 9 + YARP | 5000 |
+| Identity Service | ASP.NET Core 9 Minimal API | 5245 |
+| Auction Service | ASP.NET Core 9 Minimal API | 5255 |
+| Bidding Service | ASP.NET Core 9 Minimal API | 5170 |
+| PostgreSQL | Postgres 16 (Podman) | 5432 |
+| RabbitMQ | 3.13 (Podman) | 5672 / 15672 |
+| Redis | 7 (Podman) | 6379 |
+| pgAdmin | dpage/pgadmin4 (Podman) | 5050 |
 
-### Quick validation commands
+---
 
-```powershell
-podman --version
-podman compose version
-podman ps
+## Prerequisites
+
+| Tool | Min version | Check |
+|---|---|---|
+| Podman | 4+ | `podman --version` |
+| Podman Compose | any | `podman compose version` |
+| .NET SDK | 9.0 | `dotnet --version` |
+| Node.js | 22+ | `node --version` (only needed for frontend dev mode) |
+| npm | 10+ | `npm --version` (only needed for frontend dev mode) |
+
+Ensure the following ports are free before starting:
+
+```
+App:   5000, 5170, 5245, 5255, 5173
+Infra: 5432, 6379, 5672, 15672, 9000, 9001,
+       8025, 1025, 9090, 3000, 16686, 4317,
+       4318, 9200, 9300, 5050
 ```
 
 ---
 
-## 2) Start local infrastructure
+## Step 1 — Start infrastructure and frontend
 
-From project root (where `compose.yml` exists):
+From the project root (where `compose.yml` lives):
 
 ```powershell
 podman compose up -d
 ```
 
-Check running containers:
+This starts all infrastructure **and** the frontend (built and served by nginx on port 5173).  
+Wait ~15 seconds for PostgreSQL to become healthy before starting the .NET services:
 
 ```powershell
-podman ps
+podman ps   # all containers should show "healthy" or "running"
 ```
 
-Check logs:
+> **Frontend dev mode** — for active React development with hot module replacement, stop the compose
+> frontend container and run the Vite dev server instead:
+>
+> ```powershell
+> podman compose stop dairy-bidding-web
+> cd src/dairy-bidding-web
+> npm install   # first time only
+> npm run dev
+> ```
+>
+> To rebuild the compose image after frontend code changes:
+>
+> ```powershell
+> podman compose build dairy-bidding-web
+> podman compose up -d dairy-bidding-web
+> ```
+
+---
+
+## Step 2 — Run the .NET services
+
+Open four separate terminals from the project root. Start them in this order:
+
+```powershell
+# Terminal 1 — Identity Service
+dotnet run --project src/DairyBidding.IdentityService
+
+# Terminal 2 — Auction Service
+dotnet run --project src/DairyBidding.AuctionService
+
+# Terminal 3 — Bidding Service
+dotnet run --project src/DairyBidding.BiddingService
+
+# Terminal 4 — API Gateway
+dotnet run --project src/DairyBidding.ApiGateway
+```
+
+Each service:
+- Loads `appsettings.Development.json` automatically via its `launchSettings.json`
+- Runs EF Core migrations against its own database on startup
+- Logs to its terminal
+
+---
+
+## Step 3 — Open the app
+
+Navigate to http://localhost:5173.
+
+**Dev login credentials**
+
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | `admin123` |
+
+---
+
+## Service URLs & credentials reference
+
+### Application
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| API Gateway | http://localhost:5000 |
+| Identity Service | http://localhost:5245 |
+| Auction Service | http://localhost:5255 |
+| Bidding Service | http://localhost:5170 |
+
+### Infrastructure
+
+| Service | URL | Username | Password |
+|---|---|---|---|
+| pgAdmin | http://localhost:5050 | `admin@local.dev` | `admin123` |
+| RabbitMQ Management | http://localhost:15672 | `dairy` | `dairy_local_pass` |
+| MinIO Console | http://localhost:9001 | `dairy_minio` | `dairy_minio_pass` |
+| Mailpit | http://localhost:8025 | — | — |
+| Grafana | http://localhost:3000 | `admin` | `admin` |
+| Prometheus | http://localhost:9090 | — | — |
+| Jaeger | http://localhost:16686 | — | — |
+| Elasticsearch | http://localhost:9200 | — | — |
+
+### PostgreSQL
+
+| Setting | Value |
+|---|---|
+| Host | `localhost` (or `dairy-postgres` from within Podman network) |
+| Port | `5432` |
+| Username | `dairy_admin` |
+| Password | `dairy_local_pass` |
+
+Databases: `identity_db` · `auction_db` · `bidding_db` · `catalog_db` · `payment_db` · `notification_db`
+
+**pgAdmin server connection** — add manually after first login:  
+Host: `dairy-postgres` · Port: `5432` · Username: `dairy_admin` · Password: `dairy_local_pass`
+
+---
+
+## Common operations
+
+### Full reset — wipe all data volumes
+
+```powershell
+# 1. Stop all .NET processes
+Get-Process dotnet | Stop-Process -Force
+
+# 2. Tear down infra and delete volumes
+podman compose down -v
+
+# 3. Restart infra and wait for healthy
+podman compose up -d
+Start-Sleep 15
+
+# 4. Restart the .NET services (Step 2 above)
+```
+
+EF Core migrations re-run automatically on the next `dotnet run`.
+
+### Restart infra (keep data)
+
+```powershell
+podman compose down
+podman compose up -d
+```
+
+### View logs
 
 ```powershell
 podman compose logs -f
+podman compose logs -f postgres   # single service
 ```
 
----
-
-## 3) Stop / reset commands
-
-### Stop all services (keep data volumes)
-
-```powershell
-podman compose down
-```
-
-### Stop all services and delete volumes (full reset)
-
-```powershell
-podman compose down -v
-```
-
-### Restart all services
-
-```powershell
-podman compose down
-podman compose up -d
-```
-
----
-
-## 4) Local service URLs and credentials
-
-## Core services
-
-- **RabbitMQ Management UI**: http://localhost:15672  
-  - Username: `dairy`
-  - Password: `dairy_local_pass`
-- **RabbitMQ AMQP**: `localhost:5672`
-
-- **PostgreSQL**: `localhost:5432`  
-  - Username: `dairy_admin`
-  - Password: `dairy_local_pass`
-  - Default DB: `postgres`
-  - Service DBs created:
-    - `bidding_db`
-    - `auction_db`
-    - `catalog_db`
-    - `identity_db`
-    - `payment_db`
-    - `notification_db`
-
-- **Redis**: `localhost:6379`
-
-## Supporting services
-
-- **MinIO API**: http://localhost:9000
-- **MinIO Console**: http://localhost:9001  
-  - Username: `dairy_minio`
-  - Password: `dairy_minio_pass`
-
-- **Mailpit UI**: http://localhost:8025
-- **Mailpit SMTP**: `localhost:1025`
-
-## Observability
-
-- **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000  
-  - Username: `admin`
-  - Password: `admin`
-- **Jaeger UI**: http://localhost:16686
-- **OTLP endpoints**:
-  - gRPC: `localhost:4317`
-  - HTTP: `localhost:4318`
-
-## Search
-
-- **Elasticsearch**: http://localhost:9200
-
----
-
-## 5) Healthcheck command
-
-Run the healthcheck script:
+### Healthcheck
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\healthcheck.ps1
 ```
 
-Recommended after every fresh startup or environment change.
+---
+
+## Troubleshooting
+
+### "Port already in use" when starting a .NET service
+
+```powershell
+Get-Process dotnet | Stop-Process -Force
+```
+
+### Services fail to connect after `podman compose down -v`
+
+PostgreSQL takes ~15 seconds to initialise. Wait until `podman ps` shows `(healthy)` before starting the .NET services.
+
+### pgAdmin exits immediately (exit code 1)
+
+Check logs with `podman logs dairy-pgadmin`. Common causes:
+- **Container name conflict** — `podman rm -f dairy-pgadmin`, then `podman compose up -d pgadmin`
+- **Special-use email domain** (`.local`) — use a standard TLD such as `.dev` or `.com` for `PGADMIN_DEFAULT_EMAIL`
+
+### Auction seed events not received by BiddingService
+
+The AuctionService publishes seed events inside its `ApplicationStarted` callback. If the RabbitMQ queue was lost (e.g. after `down -v`), restart AuctionService so it re-publishes, then restart BiddingService to ensure the consumer is active.
+
+### Podman using wrong compose binary (Docker Toolbox conflict)
+
+Symptom: TLS-related error mentioning a Docker Toolbox path.  
+Fix: Ensure Podman's compose is first in `PATH`; remove old Docker Toolbox entries.
+
+### Elasticsearch memory pressure
+
+Adjust `ES_JAVA_OPTS` heap values in `compose.yml` if Elasticsearch fails to start.  
+Current config: `-Xms512m -Xmx512m`.
 
 ---
 
-## 6) Verification commands (quick smoke tests)
+## Infrastructure-only reference
 
-### PostgreSQL
-
-```powershell
-podman exec -it dairy-postgres psql -U dairy_admin -d postgres -c "\l"
-```
-
-### Redis
-
-```powershell
-podman exec -it dairy-redis redis-cli ping
-```
-
-Expected: `PONG`
-
-### RabbitMQ API
-
-```powershell
-curl -u dairy:dairy_local_pass http://localhost:15672/api/overview
-```
-
-### Elasticsearch health
-
-```powershell
-curl http://localhost:9200/_cluster/health
-```
-
-Expected status: `green` or `yellow`.
-
----
-
-## 7) Troubleshooting notes
-
-These were the key issues encountered/considered during setup:
-
-1. **Podman was trying to use Docker Toolbox `docker-compose.exe`**
-   - Symptom: TLS-related compose error from Docker Toolbox path.
-   - Fix: Ensure Podman uses `podman-compose`/`podman compose`, and remove old Docker Toolbox path from environment if needed.
-
-2. **`podman-compose` not found in PATH**
-   - Symptom: `exec: "podman-compose": executable file not found in %PATH%`
-   - Fix: Install via pip and ensure Python Scripts directory is in PATH.
-
-3. **Editor warning on Grafana datasource (`apiVersion: 1`)**
-   - Symptom: “Property apiVersion is not allowed”.
-   - Cause: YAML schema mismatch in editor (not Grafana runtime issue).
-   - Fix: Keep file as Grafana provisioning format; warning can be ignored if runtime works.
-
-4. **Elasticsearch can be memory-sensitive**
-   - Current stable config uses reduced heap:
-     - `ES_JAVA_OPTS: "-Xms512m -Xmx512m"`
-
----
-
-## 8) Current status
-
-✅ All infrastructure services started successfully with Podman  
-✅ Commands and service verification checks passed  
-✅ Environment is ready for implementation planning
+See [`docs/local-setup.md`](docs/local-setup.md) for full infrastructure smoke tests and per-service verification commands.
