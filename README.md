@@ -11,7 +11,7 @@ Full guide for running the platform locally in development mode.
 
 | Component | Technology | Dev port |
 |---|---|---|
-| Frontend | React 19 + nginx (Podman) / Vite dev server | 5173 |
+| Frontend | React 19 + Vite dev server (host) | 5173 |
 | API Gateway | ASP.NET Core 9 + YARP | 5000 |
 | Identity Service | ASP.NET Core 9 Minimal API | 5245 |
 | Auction Service | ASP.NET Core 9 Minimal API | 5255 |
@@ -44,7 +44,7 @@ Infra: 5432, 6379, 5672, 15672, 9000, 9001,
 
 ---
 
-## Step 1 — Start infrastructure and frontend
+## Step 1 — Start infrastructure
 
 From the project root (where `compose.yml` lives):
 
@@ -52,29 +52,12 @@ From the project root (where `compose.yml` lives):
 podman compose up -d
 ```
 
-This starts all infrastructure **and** the frontend (built and served by nginx on port 5173).  
+This starts all infrastructure services (Postgres, RabbitMQ, Redis, Prometheus, Grafana, etc.).  
 Wait ~15 seconds for PostgreSQL to become healthy before starting the .NET services:
 
 ```powershell
 podman ps   # all containers should show "healthy" or "running"
 ```
-
-> **Frontend dev mode** — for active React development with hot module replacement, stop the compose
-> frontend container and run the Vite dev server instead:
->
-> ```powershell
-> podman compose stop dairy-bidding-web
-> cd src/dairy-bidding-web
-> npm install   # first time only
-> npm run dev
-> ```
->
-> To rebuild the compose image after frontend code changes:
->
-> ```powershell
-> podman compose build dairy-bidding-web
-> podman compose up -d dairy-bidding-web
-> ```
 
 ---
 
@@ -103,7 +86,19 @@ Each service:
 
 ---
 
-## Step 3 — Open the app
+## Step 3 — Run the frontend
+
+```powershell
+cd src/dairy-bidding-web
+npm install   # first time only
+npm run dev
+```
+
+The Vite dev server starts on http://localhost:5173 with hot module replacement.
+
+---
+
+## Step 4 — Open the app
 
 Navigate to http://localhost:5173.
 
