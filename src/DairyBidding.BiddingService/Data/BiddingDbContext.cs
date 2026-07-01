@@ -17,12 +17,11 @@ public class BiddingDbContext : DbContext
         {
             e.ToTable("bids");
             e.HasKey(x => x.Id);
-            e.Property(x => x.Id).HasColumnName("id");
-            e.Property(x => x.AuctionId).HasColumnName("auctionid").HasMaxLength(100).IsRequired();
-            e.Property(x => x.BidderId).HasColumnName("bidderid").HasMaxLength(100).IsRequired();
-            e.Property(x => x.Amount).HasColumnName("amount").HasColumnType("numeric(18,2)").IsRequired();
-            e.Property(x => x.CreatedAtUtc).HasColumnName("createdatutc").IsRequired();
-            e.Property(x => x.IdempotencyKey).HasColumnName("idempotencykey").HasMaxLength(100).IsRequired();
+            e.Property(x => x.AuctionId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.BidderId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Amount).HasColumnType("numeric(18,2)").IsRequired();
+            e.Property(x => x.CreatedAtUtc).IsRequired();
+            e.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
             e.HasIndex(x => new { x.BidderId, x.IdempotencyKey }).IsUnique();
         });
 
@@ -30,11 +29,11 @@ public class BiddingDbContext : DbContext
         {
             e.ToTable("processed_messages");
             e.HasKey(x => x.Id);
-            e.Property(x => x.Id).HasColumnName("id");
-            e.Property(x => x.MessageId).HasColumnName("messageid").HasMaxLength(100).IsRequired();
-            e.Property(x => x.ProcessedAtUtc).HasColumnName("processedatutc").IsRequired();
+            e.Property(x => x.MessageId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ProcessedAtUtc).IsRequired();
+            e.HasIndex(x => x.MessageId).IsUnique();
         });
-        
+
         modelBuilder.Entity<AuctionBidReadModel>(e =>
         {
             e.ToTable("auction_bid_read_models");
@@ -43,16 +42,17 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.HighestBidAmount).HasPrecision(18, 2);
             e.Property(x => x.HighestBidderId).IsRequired().HasMaxLength(100);
         });
+
         modelBuilder.Entity<AuctionReadModel>(e =>
         {
             e.ToTable("auction_read_models");
             e.HasKey(x => x.AuctionId);
-            e.Property(x => x.AuctionId).HasColumnName("auctionid").HasMaxLength(100);
-            e.Property(x => x.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
-            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).IsRequired();
-            e.Property(x => x.StartsAt).HasColumnName("startsat").IsRequired();
-            e.Property(x => x.EndsAt).HasColumnName("endsat").IsRequired();
-            e.Property(x => x.UpdatedAtUtc).HasColumnName("updatedatutc").IsRequired();
+            e.Property(x => x.AuctionId).HasMaxLength(100);
+            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.StartsAt).IsRequired();
+            e.Property(x => x.EndsAt).IsRequired();
+            e.Property(x => x.UpdatedAtUtc).IsRequired();
         });
     }
 }

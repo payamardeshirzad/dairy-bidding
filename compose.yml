@@ -92,6 +92,8 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   grafana:
@@ -107,6 +109,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources:Z
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:Z
     depends_on:
       - prometheus
     restart: unless-stopped
@@ -157,18 +160,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  dairy-bidding-web:
-    build:
-      context: ./src/dairy-bidding-web
-      dockerfile: Dockerfile
-      args:
-        VITE_GATEWAY_BASE_URL: http://localhost:5000
-        VITE_AUTH_STORAGE_MODE: localStorage
-    image: dairy-bidding-web:v0.1.0
-    container_name: dairy-bidding-web
-    ports:
-      - "5173:80"
-    restart: unless-stopped
 volumes:
   pg_data:
   pgadmin_data:

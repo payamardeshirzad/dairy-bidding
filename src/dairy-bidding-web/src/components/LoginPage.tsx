@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function LoginPage({ onLogin, addToast }: Props) {
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -19,11 +19,12 @@ export default function LoginPage({ onLogin, addToast }: Props) {
     setLoading(true);
     try {
       const resp = await getToken(username, password);
-      tokenStore.set(resp.accessToken);
+      tokenStore.set(resp.accessToken, resp.expiresAtUtc);
       addToast('Signed in successfully.', 'success');
       onLogin();
     } catch (err) {
-      addToast((err as Error).message || 'Login failed. Check your credentials.', 'error');
+      const message = err instanceof Error ? err.message : String(err);
+      addToast(message || 'Login failed. Check your credentials.', 'error');
     } finally {
       setLoading(false);
     }
@@ -106,7 +107,9 @@ export default function LoginPage({ onLogin, addToast }: Props) {
           </button>
         </form>
 
-        <p className="text-center text-slate-500 text-xs mt-6">Dev credentials: admin / admin123</p>
+        {import.meta.env.DEV && (
+          <p className="text-center text-slate-500 text-xs mt-6">Dev credentials: admin / admin123</p>
+        )}
       </div>
     </div>
   );

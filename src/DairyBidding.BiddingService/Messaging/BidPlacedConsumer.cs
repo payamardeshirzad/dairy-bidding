@@ -1,7 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using DairyBidding.BiddingService.Data;
-using Microsoft.EntityFrameworkCore;
+using DairyBidding.BiddingService.Messaging.Handlers;
+using DairyBidding.Contracts.Events;
+using DairyBidding.SharedKernel.Messaging;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -84,7 +85,7 @@ public class BidPlacedConsumer : BackgroundService
         await base.StartAsync(cancellationToken);
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (_channel is null)
             throw new InvalidOperationException("RabbitMQ channel is not initialized.");
@@ -106,55 +107,11 @@ public class BidPlacedConsumer : BackgroundService
                 var json = Encoding.UTF8.GetString(ea.Body.ToArray());
                 var evt = JsonSerializer.Deserialize<BidPlacedEvent>(json)
                           ?? throw new InvalidOperationException("Invalid message payload.");
-                if (string.IsNullOrWhiteSpace(evt.MessageId))
-                    throw new InvalidOperationException("MessageId is required for idempotency.");
 
                 using var scope = _scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
+                var handler = scope.ServiceProvider.GetRequiredService<IMessageHandler<BidPlacedEvent>>();
+                await handler.HandleAsync(evt, stoppingToken);
 
-                var alreadyProcessed = await db.ProcessedMessages
-                    .AnyAsync(x => x.MessageId == evt.MessageId, stoppingToken);
-
-                if (alreadyProcessed)
-                {
-                    _logger.LogInformation("Duplicate message skipped. MessageId={MessageId}", evt.MessageId);
-                    await _channel.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
-                    return;
-                }
-
-                var read = await db.AuctionBidReadModels
-                    .FirstOrDefaultAsync(x => x.AuctionId == evt.AuctionId, stoppingToken);
-
-                if (read is null)
-                {
-                    read = new AuctionBidReadModel
-                    {
-                        AuctionId = evt.AuctionId,
-                        HighestBidAmount = evt.Amount,
-                        HighestBidderId = evt.BidderId,
-                        TotalBids = 1,
-                        UpdatedAtUtc = DateTime.UtcNow
-                    };
-                    db.AuctionBidReadModels.Add(read);
-                }
-                else
-                {
-                    read.TotalBids += 1;
-                    if (evt.Amount > read.HighestBidAmount)
-                    {
-                        read.HighestBidAmount = evt.Amount;
-                        read.HighestBidderId = evt.BidderId;
-                    }
-                    read.UpdatedAtUtc = DateTime.UtcNow;
-                }
-
-                db.ProcessedMessages.Add(new ProcessedMessage
-                {
-                    MessageId = evt.MessageId,
-                    ProcessedAtUtc = DateTime.UtcNow
-                });
-
-                await db.SaveChangesAsync(stoppingToken);
                 await _channel.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
             }
             catch (Exception ex)
@@ -210,14 +167,22 @@ public class BidPlacedConsumer : BackgroundService
             }
         };
 
-        _channel.BasicConsumeAsync(
+        await _channel.BasicConsumeAsync(
             queue: MainQueue,
             autoAck: false,
             consumer: consumer,
             cancellationToken: stoppingToken);
 
         _logger.LogInformation("BidPlacedConsumer started. Waiting for messages on queue '{Queue}'", MainQueue);
-        return Task.CompletedTask;
+
+        try
+        {
+            await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Graceful shutdown requested
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

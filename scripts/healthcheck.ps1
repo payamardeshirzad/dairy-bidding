@@ -45,6 +45,12 @@ Check-Url "Grafana API" "http://localhost:3000/api/health"
 Check-Url "Jaeger UI" "http://localhost:16686"
 Check-Url "Elasticsearch" "http://localhost:9200"
 
+Write-Host "`n-- .NET Service health --" -ForegroundColor Yellow
+Check-Url "ApiGateway" "http://localhost:5000/health"
+Check-Url "IdentityService" "http://localhost:5245/health"
+Check-Url "AuctionService" "http://localhost:5255/health"
+Check-Url "BiddingService" "http://localhost:5170/health"
+
 Write-Host "`n-- Deep checks --" -ForegroundColor Yellow
 # Redis
 $redisPing = podman exec dairy-redis redis-cli ping 2>$null

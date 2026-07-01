@@ -1,10 +1,4 @@
+// BidPlacedEvent has moved to DairyBidding.Contracts.Events.
+// This file is kept as a placeholder to avoid breaking the build.
+// Add `using DairyBidding.Contracts.Events;` where needed.
 namespace DairyBidding.BiddingService.Messaging;
-
-public record BidPlacedEvent(
-    string MessageId,
-    Guid BidId,
-    string AuctionId,
-    string BidderId,
-    decimal Amount,
-    DateTime CreatedAtUtc
-);

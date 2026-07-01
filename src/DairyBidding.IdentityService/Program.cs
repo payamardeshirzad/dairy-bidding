@@ -1,68 +1,42 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using DairyBidding.IdentityService.Data;
+using DairyBidding.IdentityService.Extensions;
+using DairyBidding.IdentityService.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry.Exporter;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
 builder.Services.AddEndpointsApiExplorer();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+// --- Database ---
+builder.Services.AddDbContext<IdentityDbContext>(options =>
+    options.UseNpgsql(
+            builder.Configuration.GetConnectionString("Postgres")
+                ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required."))
+        .UseSnakeCaseNamingConvention());
+
+// --- Identity services ---
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddSingleton<ITokenService, TokenService>();
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+
+// --- JWT ---
 var jwtSection = builder.Configuration.GetSection("Jwt");
-var issuer = jwtSection.GetValue<string>("Issuer") ?? "dairy-identity";
-var audience = jwtSection.GetValue<string>("Audience") ?? "dairy-bidding-api";
-var signingKey = jwtSection.GetValue<string>("SigningKey") ?? "THIS_IS_DEV_ONLY_CHANGE_ME_1234567890";
-var expiryMinutes = jwtSection.GetValue<int?>("ExpiryMinutes") ?? 120;
-
-var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
-
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("Frontend", policy =>
-    {
-        policy.WithOrigins(allowedOrigins)
-              .WithMethods("GET", "POST", "OPTIONS")
-              .WithHeaders("Authorization", "Content-Type");
-    });
-});
-
-builder.Services.AddRateLimiter(options =>
-{
-    options.AddFixedWindowLimiter("token-endpoint", limiter =>
-    {
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.PermitLimit = 10;
-        limiter.QueueLimit = 0;
-        limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-    });
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-});
-
-builder.Services.AddOpenTelemetry()
-    .WithTracing(tracing =>
-    {
-        tracing
-            .SetResourceBuilder(
-                ResourceBuilder.CreateDefault()
-                    .AddService("dairy-identity-service"))
-            .AddAspNetCoreInstrumentation()
-            .AddOtlpExporter(otlp =>
-            {
-                otlp.Endpoint = new Uri(builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317");
-                otlp.Protocol = OtlpExportProtocol.Grpc;
-            });
-    });
+var issuer = jwtSection["Issuer"] ?? "dairy-identity";
+var audience = jwtSection["Audience"] ?? "dairy-bidding-api";
+var signingKey = builder.Configuration["Jwt:SigningKey"]
+    ?? throw new InvalidOperationException("Jwt:SigningKey is required. Set it via dotnet user-secrets.");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -75,19 +49,66 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = issuer,
             ValidAudience = audience,
-            IssuerSigningKey = key,
-            ClockSkew = TimeSpan.FromSeconds(30) // Allow a small clock skew for token expiration
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+            ClockSkew = TimeSpan.FromSeconds(30),
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = ctx =>
+            {
+                var logger = ctx.HttpContext.RequestServices
+                    .GetRequiredService<ILogger<JwtBearerEvents>>();
+                logger.LogWarning("JWT authentication failed: {Message}", ctx.Exception.Message);
+                return Task.CompletedTask;
+            }
         };
     });
 
 builder.Services.AddAuthorization();
+
+// --- CORS ---
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+    options.AddPolicy("Frontend", policy =>
+        policy.WithOrigins(allowedOrigins)
+              .WithMethods("GET", "POST", "OPTIONS")
+              .WithHeaders("Authorization", "Content-Type")));
+
+// --- Rate limiting ---
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("token-endpoint", limiter =>
+    {
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.PermitLimit = 10;
+        limiter.QueueLimit = 0;
+        limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
+// --- Observability ---
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+        tracing.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("dairy-identity-service"))
+               .AddAspNetCoreInstrumentation()
+               .AddOtlpExporter(otlp =>
+               {
+                   otlp.Endpoint = new Uri(builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317");
+                   otlp.Protocol = OtlpExportProtocol.Grpc;
+               }))
+    .WithMetrics(metrics =>
+        metrics.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("dairy-identity-service"))
+               .AddAspNetCoreInstrumentation()
+               .AddRuntimeInstrumentation()
+               .AddPrometheusExporter());
+
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+await app.MigrateAndSeedAsync();
+
 if (app.Environment.IsDevelopment())
-{
     app.MapOpenApi();
-}
 
 app.UseCors("Frontend");
 app.UseHttpsRedirection();
@@ -97,37 +118,17 @@ app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "identity" }));
 
-app.MapPost("/auth/token", (LoginRequest request) =>
+app.MapPost("/auth/token", async (LoginRequest request, IUserService users, ITokenService tokens) =>
 {
     if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
         return Results.BadRequest("Username and password are required.");
 
-    // Dev-only credential check
-    if (request.Username != "admin" || request.Password != "admin123")
+    var user = await users.ValidateCredentialsAsync(request.Username, request.Password);
+    if (user is null)
         return Results.Unauthorized();
 
-    var claims = new List<Claim>
-    {
-        new(JwtRegisteredClaimNames.Sub, request.Username),
-        new(JwtRegisteredClaimNames.UniqueName, request.Username),
-        new(ClaimTypes.Name, request.Username),
-        new(ClaimTypes.Role, "Admin"),
-        new("scope", "bidding.write")
-    };
-
-    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-    var expires = DateTime.UtcNow.AddMinutes(expiryMinutes);
-
-    var token = new JwtSecurityToken(
-        issuer: issuer,
-        audience: audience,
-        claims: claims,
-        expires: expires,
-        signingCredentials: creds);
-
-    var jwt = new JwtSecurityTokenHandler().WriteToken(token);
-
-    return Results.Ok(new TokenResponse(jwt, "Bearer", expires));
+    var (jwt, expiresAt) = tokens.CreateToken(user.Username, user.Role);
+    return Results.Ok(new TokenResponse(jwt, "Bearer", expiresAt));
 }).RequireRateLimiting("token-endpoint");
 
 app.MapGet("/auth/me", (ClaimsPrincipal user) =>
@@ -136,6 +137,8 @@ app.MapGet("/auth/me", (ClaimsPrincipal user) =>
     var claims = user.Claims.Select(c => new { c.Type, c.Value });
     return Results.Ok(new { name, claims });
 }).RequireAuthorization();
+
+app.MapPrometheusScrapingEndpoint();
 
 app.Run();
 

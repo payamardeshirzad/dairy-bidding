@@ -2,7 +2,20 @@ import { useState } from 'react';
 import { tokenStore } from '../auth/tokenStore';
 import AuctionList from './AuctionList';
 import BidPanel from './BidPanel';
+import { ErrorBoundary } from './ErrorBoundary';
 import type { ActiveAuction } from '../api/biddingApi';
+
+function getUsernameFromToken(): string {
+  const token = tokenStore.get();
+  if (!token) return 'unknown';
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1])) as Record<string, unknown>;
+    const sub = payload['sub'] ?? payload['unique_name'];
+    return typeof sub === 'string' && sub.length > 0 ? sub : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 interface Props {
   onLogout: () => void;
@@ -11,6 +24,7 @@ interface Props {
 
 export default function Dashboard({ onLogout, addToast }: Props) {
   const [selectedAuction, setSelectedAuction] = useState<ActiveAuction | null>(null);
+  const username = getUsernameFromToken();
 
   function handleLogout() {
     tokenStore.clear();
@@ -30,7 +44,7 @@ export default function Dashboard({ onLogout, addToast }: Props) {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm text-slate-400">
             <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" />
-            <span className="text-slate-300 font-medium">admin</span>
+            <span className="text-slate-300 font-medium">{username}</span>
           </div>
           <button
             onClick={handleLogout}
@@ -43,15 +57,19 @@ export default function Dashboard({ onLogout, addToast }: Props) {
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        <AuctionList selectedId={selectedAuction?.id ?? null} onSelect={setSelectedAuction} />
+        <ErrorBoundary>
+          <AuctionList selectedId={selectedAuction?.id ?? null} onSelect={setSelectedAuction} />
+        </ErrorBoundary>
 
         <main className="flex-1 overflow-y-auto">
           {selectedAuction ? (
-            <BidPanel
-              auctionId={selectedAuction.id}
-              auctionTitle={selectedAuction.title}
-              addToast={addToast}
-            />
+            <ErrorBoundary>
+              <BidPanel
+                auctionId={selectedAuction.id}
+                auctionTitle={selectedAuction.title}
+                addToast={addToast}
+              />
+            </ErrorBoundary>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center p-8">
               <span className="text-6xl mb-4">🏷️</span>

@@ -26,24 +26,30 @@ namespace DairyBidding.BiddingService.Data.Migrations
                 {
                     b.Property<string>("AuctionId")
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("auction_id");
 
                     b.Property<decimal>("HighestBidAmount")
                         .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("highest_bid_amount");
 
                     b.Property<string>("HighestBidderId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("highest_bidder_id");
 
                     b.Property<int>("TotalBids")
-                        .HasColumnType("integer");
+                        .HasColumnType("integer")
+                        .HasColumnName("total_bids");
 
                     b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
 
-                    b.HasKey("AuctionId");
+                    b.HasKey("AuctionId")
+                        .HasName("pk_auction_bid_read_models");
 
                     b.ToTable("auction_bid_read_models", (string)null);
                 });
@@ -53,15 +59,15 @@ namespace DairyBidding.BiddingService.Data.Migrations
                     b.Property<string>("AuctionId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("auctionid");
+                        .HasColumnName("auction_id");
 
                     b.Property<DateTime>("EndsAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("endsat");
+                        .HasColumnName("ends_at");
 
                     b.Property<DateTime>("StartsAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("startsat");
+                        .HasColumnName("starts_at");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -77,9 +83,10 @@ namespace DairyBidding.BiddingService.Data.Migrations
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updatedatutc");
+                        .HasColumnName("updated_at_utc");
 
-                    b.HasKey("AuctionId");
+                    b.HasKey("AuctionId")
+                        .HasName("pk_auction_read_models");
 
                     b.ToTable("auction_read_models", (string)null);
                 });
@@ -99,28 +106,30 @@ namespace DairyBidding.BiddingService.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("auctionid");
+                        .HasColumnName("auction_id");
 
                     b.Property<string>("BidderId")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("bidderid");
+                        .HasColumnName("bidder_id");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("createdatutc");
+                        .HasColumnName("created_at_utc");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("idempotencykey");
+                        .HasColumnName("idempotency_key");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id")
+                        .HasName("pk_bids");
 
                     b.HasIndex("BidderId", "IdempotencyKey")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("ix_bids_bidder_id_idempotency_key");
 
                     b.ToTable("bids", (string)null);
                 });
@@ -138,13 +147,18 @@ namespace DairyBidding.BiddingService.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("messageid");
+                        .HasColumnName("message_id");
 
                     b.Property<DateTime>("ProcessedAtUtc")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("processedatutc");
+                        .HasColumnName("processed_at_utc");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id")
+                        .HasName("pk_processed_messages");
+
+                    b.HasIndex("MessageId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_processed_messages_message_id");
 
                     b.ToTable("processed_messages", (string)null);
                 });

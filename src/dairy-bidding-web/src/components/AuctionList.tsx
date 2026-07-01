@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { getActiveAuctions, type ActiveAuction } from '../api/biddingApi';
 import Spinner from './Spinner';
 
-function timeLeft(endsAt: string): string {
-  const diff = new Date(endsAt).getTime() - Date.now();
+function timeLeft(endsAt: string, now: number): string {
+  const diff = new Date(endsAt).getTime() - now;
   if (diff <= 0) return 'Ended';
   const h = Math.floor(diff / 3_600_000);
   const m = Math.floor((diff % 3_600_000) / 60_000);
@@ -21,7 +21,7 @@ export default function AuctionList({ selectedId, onSelect }: Props) {
   const [auctions, setAuctions] = useState<ActiveAuction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(Date.now());
 
   const load = useCallback(async () => {
     try {
@@ -29,7 +29,7 @@ export default function AuctionList({ selectedId, onSelect }: Props) {
       setAuctions(data);
       setError('');
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -43,7 +43,7 @@ export default function AuctionList({ selectedId, onSelect }: Props) {
 
   // Tick every second so countdown refreshes
   useEffect(() => {
-    const t = setInterval(() => setTick(n => n + 1), 1000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -72,8 +72,8 @@ export default function AuctionList({ selectedId, onSelect }: Props) {
         )}
         {auctions.map(a => {
           const isSelected = a.id === selectedId;
-          const remaining = timeLeft(a.endsAt);
-          const ending = remaining !== 'Ended' && new Date(a.endsAt).getTime() - Date.now() < 3_600_000;
+          const remaining = timeLeft(a.endsAt, now);
+          const ending = remaining !== 'Ended' && new Date(a.endsAt).getTime() - now < 3_600_000;
           return (
             <button
               key={a.id}

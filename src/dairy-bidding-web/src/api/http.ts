@@ -10,12 +10,25 @@ export async function http<T>(input: RequestInfo | URL, init?: RequestInit): Pro
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(input, { ...init, headers });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
+
+  let response: Response;
+  try {
+    response = await fetch(input, { ...init, headers, signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (response.status === 401) {
-    const wwwAuth = response.headers.get('WWW-Authenticate');
-    const errBody = await response.text().catch(() => '');
-    console.error('[401 debug] WWW-Authenticate:', wwwAuth, '| body:', errBody);
+    if (import.meta.env.DEV) {
+      const wwwAuth = response.headers.get('WWW-Authenticate');
+      const errBody = await response.text().catch(() => '');
+      console.error('[401 debug] WWW-Authenticate:', wwwAuth, '| body:', errBody);
+    }
     tokenStore.clear();
     throw new Error('Unauthorized. Please log in again.');
   }
@@ -25,6 +38,6 @@ export async function http<T>(input: RequestInfo | URL, init?: RequestInit): Pro
     throw new Error(`HTTP ${response.status}: ${txt || response.statusText}`);
   }
 
-  if (response.status === 204) return {} as T;
+  if (response.status === 204) return undefined as unknown as T;
   return (await response.json()) as T;
 }
