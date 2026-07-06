@@ -1,3 +1,4 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace DairyBidding.AuctionService.Data;
@@ -23,5 +24,8 @@ public class AuctionDbContext : DbContext
             e.Property(x => x.Status).IsRequired();
             e.Property(x => x.CreatedAtUtc).IsRequired();
         });
+
+        modelBuilder.AddOutboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
     }
 }
