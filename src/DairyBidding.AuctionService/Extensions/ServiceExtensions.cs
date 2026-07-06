@@ -1,6 +1,7 @@
 using System.Text;
 using DairyBidding.AuctionService.Data;
-using DairyBidding.AuctionService.Messaging;
+using DairyBidding.Contracts.Events;
+using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -9,7 +10,6 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using RabbitMQ.Client;
 
 namespace DairyBidding.AuctionService.Extensions;
 
@@ -55,10 +55,33 @@ public static class ServiceExtensions
 
     public static IServiceCollection AddAuctionMessaging(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<RabbitMqOptions>(configuration.GetSection("RabbitMQ"));
-        services.AddSingleton<AuctionEventPublisher>();
-        services.AddSingleton<IAuctionEventPublisher>(sp => sp.GetRequiredService<AuctionEventPublisher>());
-        services.AddHostedService(sp => sp.GetRequiredService<AuctionEventPublisher>());
+        services.AddMassTransit(x =>
+        {
+            x.AddEntityFrameworkOutbox<AuctionDbContext>(o =>
+            {
+                o.UsePostgres();
+                o.UseBusOutbox();
+            });
+
+            x.UsingRabbitMq((ctx, cfg) =>
+            {
+                var host = configuration["RabbitMQ:Host"] ?? "localhost";
+                var port = configuration["RabbitMQ:Port"] ?? "5672";
+                var vhost = configuration["RabbitMQ:VirtualHost"] ?? "/";
+
+                cfg.Host(new Uri($"rabbitmq://{host}:{port}/{Uri.EscapeDataString(vhost)}"), h =>
+                {
+                    h.Username(configuration["RabbitMQ:Username"] ?? "guest");
+                    h.Password(configuration["RabbitMQ:Password"] ?? "guest");
+                });
+
+                cfg.Message<AuctionStatusChangedEvent>(e => e.SetEntityName("auctions.fanout"));
+                cfg.Publish<AuctionStatusChangedEvent>(p => p.ExchangeType = "fanout");
+
+                cfg.ConfigureEndpoints(ctx);
+            });
+        });
+
         return services;
     }
 
@@ -80,20 +103,7 @@ public static class ServiceExtensions
 
         services.AddHealthChecks()
             .AddNpgSql(connectionString, name: "postgres",
-                failureStatus: HealthStatus.Unhealthy, tags: ["ready"])
-            .AddRabbitMQ(sp =>
-            {
-                var cfg = sp.GetRequiredService<IConfiguration>();
-                var factory = new ConnectionFactory
-                {
-                    HostName = cfg["RabbitMQ:Host"] ?? "localhost",
-                    Port = int.TryParse(cfg["RabbitMQ:Port"], out var p) ? p : 5672,
-                    UserName = cfg["RabbitMQ:User"] ?? "guest",
-                    Password = cfg["RabbitMQ:Pass"] ?? "guest",
-                    VirtualHost = cfg["RabbitMQ:VHost"] ?? "/",
-                };
-                return factory.CreateConnectionAsync();
-            }, name: "rabbitmq", failureStatus: HealthStatus.Unhealthy, tags: ["ready"]);
+                failureStatus: HealthStatus.Unhealthy, tags: ["ready"]);
 
         return services;
     }

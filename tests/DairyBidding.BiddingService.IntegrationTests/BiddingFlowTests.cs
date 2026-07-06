@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
 
 public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
 {
@@ -86,16 +85,16 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
         var bad = Encoding.UTF8.GetBytes("{\"not\":\"valid BidPlacedEvent\"}");
 
         await ch.BasicPublishAsync(
-            exchange: "bidding.events",
-            routingKey: "bid.placed",
+            exchange: "",
+            routingKey: "bidding.bid-placed",
             mandatory: false,
             basicProperties: new BasicProperties { Persistent = true, ContentType = "application/json" },
             body: bad);
 
-        // wait for retries + dlq
-        await Task.Delay(TimeSpan.FromSeconds(20));
+        // wait for retries (3x 500ms intervals) + error queue delivery
+        await Task.Delay(TimeSpan.FromSeconds(10));
 
-        var result = await ch.QueueDeclarePassiveAsync("bidding.bidplaced.dlq");
+        var result = await ch.QueueDeclarePassiveAsync("bidding.bid-placed_error");
         result.MessageCount.Should().BeGreaterThan(0);
     }
 

@@ -1,3 +1,4 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace DairyBidding.BiddingService.Data;
@@ -54,5 +55,9 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.EndsAt).IsRequired();
             e.Property(x => x.UpdatedAtUtc).IsRequired();
         });
+
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
     }
 }
