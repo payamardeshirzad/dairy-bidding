@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using DairyBidding.BiddingService.Data;
-using DairyBidding.BiddingService.Messaging;
 using DairyBidding.Contracts.Events;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace DairyBidding.BiddingService.Extensions;
@@ -85,7 +85,7 @@ public static class WebAppExtensions
             PlaceBidRequest request,
             ClaimsPrincipal user,
             BiddingDbContext db,
-            IBidPlacedPublisher publisher,
+            IPublishEndpoint publishEndpoint,
             ILogger<WebApplication> logger,
             CancellationToken ct) =>
         {
@@ -141,6 +141,14 @@ public static class WebAppExtensions
                 bid.AuctionId, bid.BidderId, bid.Amount);
 
             db.Bids.Add(bid);
+
+            var evt = new BidPlacedEvent(
+                Guid.NewGuid().ToString("N"),
+                bid.Id, bid.AuctionId, bid.BidderId, bid.Amount, bid.CreatedAtUtc);
+
+            // Outbox: writes outbox row to the same transaction as the bid row
+            await publishEndpoint.Publish(evt, ct);
+
             try
             {
                 await db.SaveChangesAsync(ct);
@@ -157,13 +165,6 @@ public static class WebAppExtensions
                     raced.Amount, raced.CreatedAtUtc, Deduplicated = true,
                 });
             }
-
-            var evt = new BidPlacedEvent(
-                Guid.NewGuid().ToString("N"),
-                bid.Id, bid.AuctionId, bid.BidderId, bid.Amount, bid.CreatedAtUtc);
-
-            var correlationId = http.Items["X-Correlation-ID"]?.ToString();
-            await publisher.PublishAsync(evt, correlationId, http.RequestAborted);
 
             return Results.Ok(new
             {

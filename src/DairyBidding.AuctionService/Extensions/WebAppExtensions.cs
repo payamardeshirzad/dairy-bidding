@@ -1,6 +1,6 @@
 using DairyBidding.AuctionService.Data;
-using DairyBidding.AuctionService.Messaging;
 using DairyBidding.Contracts.Events;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace DairyBidding.AuctionService.Extensions;
@@ -24,7 +24,7 @@ public static class WebAppExtensions
                 {
                     await using var scope = app.Services.CreateAsyncScope();
                     var db = scope.ServiceProvider.GetRequiredService<AuctionDbContext>();
-                    var publisher = scope.ServiceProvider.GetRequiredService<IAuctionEventPublisher>();
+                    var publishEndpoint = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
                     var logger = scope.ServiceProvider.GetRequiredService<ILogger<WebApplication>>();
 
                     var seeds = new[]
@@ -39,10 +39,10 @@ public static class WebAppExtensions
                         if (!await db.Auctions.AnyAsync(a => a.Id == seed.Id))
                         {
                             db.Auctions.Add(seed);
-                            await db.SaveChangesAsync();
-                            await publisher.PublishStatusChangedAsync(new AuctionStatusChangedEvent(
+                            await publishEndpoint.Publish(new AuctionStatusChangedEvent(
                                 Guid.NewGuid().ToString("N"), seed.Id, seed.Title,
                                 "Active", seed.StartsAt, seed.EndsAt, DateTime.UtcNow));
+                            await db.SaveChangesAsync();
                             logger.LogInformation("Seeded auction {Id}", seed.Id);
                         }
                     }

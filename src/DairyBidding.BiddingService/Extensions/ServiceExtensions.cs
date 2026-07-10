@@ -4,6 +4,7 @@ using DairyBidding.BiddingService.Messaging;
 using DairyBidding.BiddingService.Messaging.Handlers;
 using DairyBidding.Contracts.Events;
 using DairyBidding.SharedKernel.Messaging;
+using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -12,7 +13,6 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using RabbitMQ.Client;
 
 namespace DairyBidding.BiddingService.Extensions;
 
@@ -58,12 +58,50 @@ public static class ServiceExtensions
 
     public static IServiceCollection AddBiddingMessaging(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<RabbitMqOptions>(configuration.GetSection("RabbitMQ"));
-        services.AddSingleton<BidPlacedPublisher>();
-        services.AddSingleton<IBidPlacedPublisher>(sp => sp.GetRequiredService<BidPlacedPublisher>());
-        services.AddHostedService(sp => sp.GetRequiredService<BidPlacedPublisher>());
-        services.AddHostedService<BidPlacedConsumer>();
-        services.AddHostedService<AuctionStatusChangedConsumer>();
+        services.AddMassTransit(x =>
+        {
+            x.AddEntityFrameworkOutbox<BiddingDbContext>(o =>
+            {
+                o.UsePostgres();
+                o.UseBusOutbox();
+            });
+
+            x.AddConsumer<BidPlacedConsumer>();
+            x.AddConsumer<AuctionStatusChangedConsumer>();
+
+            x.UsingRabbitMq((ctx, cfg) =>
+            {
+                var host = configuration["RabbitMQ:Host"] ?? "localhost";
+                var port = configuration["RabbitMQ:Port"] ?? "5672";
+                var vhost = configuration["RabbitMQ:VirtualHost"] ?? "/";
+
+                cfg.Host(new Uri($"rabbitmq://{host}:{port}/{Uri.EscapeDataString(vhost)}"), h =>
+                {
+                    h.Username(configuration["RabbitMQ:Username"] ?? "guest");
+                    h.Password(configuration["RabbitMQ:Password"] ?? "guest");
+                });
+
+                cfg.Message<BidPlacedEvent>(e => e.SetEntityName("bids.topic"));
+                cfg.Publish<BidPlacedEvent>(p => p.ExchangeType = "topic");
+
+                cfg.Message<AuctionStatusChangedEvent>(e => e.SetEntityName("auctions.fanout"));
+                cfg.Publish<AuctionStatusChangedEvent>(p => p.ExchangeType = "fanout");
+
+                cfg.ReceiveEndpoint("bidding.bid-placed", e =>
+                {
+                    e.SetQueueArgument("x-queue-type", "quorum");
+                    e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(500)));
+                    e.ConfigureConsumer<BidPlacedConsumer>(ctx);
+                });
+
+                cfg.ReceiveEndpoint("bidding.auction-status-changed", e =>
+                {
+                    e.SetQueueArgument("x-queue-type", "quorum");
+                    e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(500)));
+                    e.ConfigureConsumer<AuctionStatusChangedConsumer>(ctx);
+                });
+            });
+        });
 
         services.AddScoped<IMessageHandler<BidPlacedEvent>, BidPlacedHandler>();
         services.AddScoped<IMessageHandler<AuctionStatusChangedEvent>, AuctionStatusChangedHandler>();
@@ -89,20 +127,7 @@ public static class ServiceExtensions
 
         services.AddHealthChecks()
             .AddNpgSql(connectionString, name: "postgres",
-                failureStatus: HealthStatus.Unhealthy, tags: ["ready"])
-            .AddRabbitMQ(sp =>
-            {
-                var cfg = sp.GetRequiredService<IConfiguration>();
-                var factory = new ConnectionFactory
-                {
-                    HostName = cfg["RabbitMQ:Host"] ?? "localhost",
-                    Port = int.TryParse(cfg["RabbitMQ:Port"], out var p) ? p : 5672,
-                    UserName = cfg["RabbitMQ:User"] ?? "guest",
-                    Password = cfg["RabbitMQ:Pass"] ?? "guest",
-                    VirtualHost = cfg["RabbitMQ:VHost"] ?? "/",
-                };
-                return factory.CreateConnectionAsync();
-            }, name: "rabbitmq", failureStatus: HealthStatus.Unhealthy, tags: ["ready"]);
+                failureStatus: HealthStatus.Unhealthy, tags: ["ready"]);
 
         return services;
     }
