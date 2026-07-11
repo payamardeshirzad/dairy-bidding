@@ -1,11 +1,14 @@
+using System.Text;
 using DairyBidding.BiddingService.Data;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Networks;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
 
@@ -54,11 +57,27 @@ public sealed class BiddingApiFactory : WebApplicationFactory<Program>, IAsyncLi
                 ["RabbitMQ:Username"] = "guest",
                 ["RabbitMQ:Password"] = "guest",
                 ["RabbitMQ:VirtualHost"] = "/",
-                ["Jwt:Issuer"] = "dairy-identity",
                 ["Jwt:Audience"] = "dairy-bidding-api",
-                ["Jwt:SigningKey"] = "THIS_IS_DEV_ONLY_CHANGE_ME_1234567890",
             };
             config.AddInMemoryCollection(dict);
+        });
+
+        // Override JWT bearer to use symmetric key — no Duende IS running during tests
+        builder.ConfigureServices(services =>
+        {
+            services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, opts =>
+            {
+                opts.Authority = null;
+                opts.Configuration = null;
+                opts.ConfigurationManager = null;
+                opts.TokenValidationParameters.ValidateIssuerSigningKey = true;
+                opts.TokenValidationParameters.IssuerSigningKey =
+                    new SymmetricSecurityKey(Encoding.UTF8.GetBytes("THIS_IS_DEV_ONLY_CHANGE_ME_1234567890"));
+                opts.TokenValidationParameters.ValidIssuer = "dairy-identity";
+                opts.TokenValidationParameters.ValidateIssuer = true;
+                opts.TokenValidationParameters.ValidAudience = "dairy-bidding-api";
+                opts.TokenValidationParameters.ValidateAudience = true;
+            });
         });
     }
 
