@@ -1,11 +1,9 @@
-using System.Text;
 using DairyBidding.AuctionService.Data;
 using DairyBidding.Contracts.Events;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -28,25 +26,13 @@ public static class ServiceExtensions
 
     public static IServiceCollection AddAuctionAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
-        var issuer = configuration["Jwt:Issuer"] ?? "dairy-identity";
-        var audience = configuration["Jwt:Audience"] ?? "dairy-bidding-api";
-        var signingKey = configuration["Jwt:SigningKey"]
-            ?? throw new InvalidOperationException("Jwt:SigningKey is required. Set it via dotnet user-secrets.");
-
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidIssuer = issuer,
-                    ValidateAudience = true,
-                    ValidAudience = audience,
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
-                    ValidateLifetime = true,
-                    ClockSkew = TimeSpan.FromSeconds(30),
-                };
+                options.Authority = configuration["Jwt:Authority"] ?? "http://localhost:5245";
+                options.Audience = configuration["Jwt:Audience"] ?? "dairy-bidding-api";
+                options.RequireHttpsMetadata = false;
+                options.TokenValidationParameters.ClockSkew = TimeSpan.FromSeconds(30);
             });
 
         services.AddAuthorization();

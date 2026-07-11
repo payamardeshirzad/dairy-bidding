@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
@@ -96,6 +97,41 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
 
         var result = await ch.QueueDeclarePassiveAsync("bidding.bid-placed_error");
         result.MessageCount.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task NoToken_PostBid_Returns401()
+    {
+        var client = _factory.CreateClient();
+        var res = await client.PostAsJsonAsync("/bids",
+            new { auctionId = BiddingApiFactory.TestAuctionId, amount = 50m });
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ExpiredToken_PostBid_Returns401()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", JwtTestToken.CreateExpired());
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+
+        var res = await client.PostAsJsonAsync("/bids",
+            new { auctionId = BiddingApiFactory.TestAuctionId, amount = 50m });
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task WrongAudience_PostBid_Returns401()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", JwtTestToken.CreateWithAudience("wrong-audience"));
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+
+        var res = await client.PostAsJsonAsync("/bids",
+            new { auctionId = BiddingApiFactory.TestAuctionId, amount = 50m });
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     private static async Task<T?> PollUntilAsync<T>(Func<Task<T?>> check, int attempts, int delayMs) where T : class
