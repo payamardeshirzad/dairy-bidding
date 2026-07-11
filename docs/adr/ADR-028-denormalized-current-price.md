@@ -1,7 +1,7 @@
 # ADR-028: Denormalized current_price and counters on the auctions table
 
 ## Status
-Accepted — Not yet implemented
+Accepted — Implemented
 
 ## Context
 Every auction page load needs the current leading bid price and bid count. Computing these as `MAX(bids.amount)` and `COUNT(bids.id)` with a `JOIN` on every request is expensive under load, especially with thousands of concurrent auctions.

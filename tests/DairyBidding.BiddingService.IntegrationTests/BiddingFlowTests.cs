@@ -144,4 +144,97 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
         }
         return null;
     }
+
+    [Fact]
+    public async Task BidBelowCurrentHighest_IsRejected()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", JwtTestToken.Create());
+
+        // First bid — well above starting price
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        var first = await client.PostAsJsonAsync("/bids",
+            new { auctionId = BiddingApiFactory.TestAuctionId, amount = 200m });
+        first.EnsureSuccessStatusCode();
+
+        // Poll until read model reflects the first bid
+        await PollUntilAsync(
+            async () =>
+            {
+                var r = await client.GetAsync($"/auctions/{BiddingApiFactory.TestAuctionId}/highest-bid");
+                if (!r.IsSuccessStatusCode) return null;
+                var json = await r.Content.ReadFromJsonAsync<JsonDocument>();
+                var amount = json?.RootElement.GetProperty("highestBidAmount").GetDecimal();
+                return amount >= 200m ? json : null;
+            },
+            attempts: 20, delayMs: 500);
+
+        // Second bid — below current highest
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        var low = await client.PostAsJsonAsync("/bids",
+            new { auctionId = BiddingApiFactory.TestAuctionId, amount = 150m });
+
+        low.StatusCode.Should().Be(HttpStatusCode.Conflict,
+            "a bid below the current highest should be rejected");
+
+        var body = await low.Content.ReadFromJsonAsync<JsonDocument>();
+        body!.RootElement.GetProperty("currentMinimum").GetDecimal()
+            .Should().Be(200m);
+    }
+
+    [Fact]
+    public async Task ConcurrentBids_AllAccepted_ReadModelIsConsistent()
+    {
+        // Create a dedicated factory to isolate this test's data
+        await using var factory = new BiddingApiFactory();
+        await factory.InitializeAsync();
+
+        const int concurrentBids = 5;
+        var amounts = new[] { 110m, 130m, 120m, 160m, 140m };
+
+        var tasks = amounts.Select((amount, idx) => Task.Run(async () =>
+        {
+            var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", JwtTestToken.Create());
+            client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            return await client.PostAsJsonAsync("/bids",
+                new { auctionId = BiddingApiFactory.TestAuctionId, amount });
+        })).ToList();
+
+        var responses = await Task.WhenAll(tasks);
+
+        // All bids (>= starting price of 100) should be accepted
+        responses.Should().AllSatisfy(r =>
+            r.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Conflict),
+            "each bid is either accepted or rejected for being below the current minimum");
+
+        // At least the highest bid must have been accepted
+        var acceptedAmounts = new List<decimal>();
+        foreach (var (r, amount) in responses.Zip(amounts))
+            if (r.StatusCode == HttpStatusCode.OK)
+                acceptedAmounts.Add(amount);
+
+        acceptedAmounts.Should().NotBeEmpty("at least one bid should be accepted");
+
+        // Poll until the read model stabilises
+        var read = await PollUntilAsync(
+            async () =>
+            {
+                var r = await factory.CreateClient()
+                    .GetAsync($"/auctions/{BiddingApiFactory.TestAuctionId}/highest-bid");
+                if (!r.IsSuccessStatusCode) return null;
+                var json = await r.Content.ReadFromJsonAsync<JsonDocument>();
+                var total = json?.RootElement.GetProperty("totalBids").GetInt32();
+                return total == acceptedAmounts.Count ? json : null;
+            },
+            attempts: 30, delayMs: 500);
+
+        read.Should().NotBeNull("read model should converge within 15 seconds");
+        read!.RootElement.GetProperty("highestBidAmount").GetDecimal()
+            .Should().Be(acceptedAmounts.Max(), "the read model must reflect the highest accepted bid");
+    }
 }

@@ -41,7 +41,7 @@ public static class WebAppExtensions
                             db.Auctions.Add(seed);
                             await publishEndpoint.Publish(new AuctionStatusChangedEvent(
                                 Guid.NewGuid().ToString("N"), seed.Id, seed.Title,
-                                "Active", seed.StartsAt, seed.EndsAt, DateTime.UtcNow));
+                                "Active", seed.StartsAt, seed.EndsAt, DateTime.UtcNow, seed.StartingPrice));
                             await db.SaveChangesAsync();
                             logger.LogInformation("Seeded auction {Id}", seed.Id);
                         }
@@ -71,8 +71,8 @@ public static class WebAppExtensions
                 .OrderBy(a => a.EndsAt)
                 .Select(a => new
                 {
-                    a.Id, a.Title, a.Description, a.StartingPrice, a.StartsAt, a.EndsAt,
-                    Status = a.Status.ToString(),
+                    a.Id, a.Title, a.Description, a.StartingPrice, a.CurrentPrice, a.BidCount,
+                    a.StartsAt, a.EndsAt, Status = a.Status.ToString(),
                 })
                 .ToListAsync(ct);
 
@@ -88,6 +88,7 @@ public static class WebAppExtensions
             return Results.Ok(new
             {
                 auction.Id, auction.Title, auction.Description, auction.StartingPrice,
+                auction.CurrentPrice, auction.BidCount,
                 auction.StartsAt, auction.EndsAt, Status = auction.Status.ToString(),
             });
         });

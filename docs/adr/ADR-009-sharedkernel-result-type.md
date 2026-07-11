@@ -1,7 +1,7 @@
-# ADR-009: SharedKernel with Result<T> and IMessageHandler<T>
+# ADR-009: SharedKernel with Result<T>, IMessageHandler<T>, and OptimisticRetry
 
 ## Status
-Accepted — Partially Implemented (IMessageHandler<T> done; Result<T> stub only)
+Accepted — Partially Implemented (`IMessageHandler<T>` and `OptimisticRetry` done; `Result<T>` stub only)
 
 ## Context
 Domain primitives that are reused across multiple services — `Result<T>` for explicit error propagation and `IMessageHandler<T>` for message handling abstraction — should not be duplicated per service.

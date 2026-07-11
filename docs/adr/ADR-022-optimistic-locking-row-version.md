@@ -1,7 +1,7 @@
 # ADR-022: Optimistic locking via row_version on contested tables
 
 ## Status
-Accepted — Not yet implemented
+Accepted — Implemented
 
 ## Context
 The `auctions` table is updated by multiple concurrent processes: bid acceptance, anti-snipe extension (see ADR-034), and status transitions. A last-write-wins strategy silently discards updates (e.g. two bid acceptances could overwrite `current_price` to a stale value).
