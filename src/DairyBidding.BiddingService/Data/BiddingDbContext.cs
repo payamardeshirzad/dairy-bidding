@@ -40,8 +40,10 @@ public class BiddingDbContext : DbContext
             e.ToTable("auction_bid_read_models");
             e.HasKey(x => x.AuctionId);
             e.Property(x => x.AuctionId).HasMaxLength(100);
-            e.Property(x => x.HighestBidAmount).HasPrecision(18, 2);
+            e.Property(x => x.HighestBidAmount).HasPrecision(18, 4);
             e.Property(x => x.HighestBidderId).IsRequired().HasMaxLength(100);
+            // ADR-022: optimistic concurrency token — EF includes row_version in UPDATE WHERE clause
+            e.Property(x => x.RowVersion).IsConcurrencyToken().HasDefaultValue(0);
         });
 
         modelBuilder.Entity<AuctionReadModel>(e =>
@@ -51,6 +53,7 @@ public class BiddingDbContext : DbContext
             e.Property(x => x.AuctionId).HasMaxLength(100);
             e.Property(x => x.Title).HasMaxLength(200).IsRequired();
             e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.StartingPrice).HasPrecision(18, 4);
             e.Property(x => x.StartsAt).IsRequired();
             e.Property(x => x.EndsAt).IsRequired();
             e.Property(x => x.UpdatedAtUtc).IsRequired();

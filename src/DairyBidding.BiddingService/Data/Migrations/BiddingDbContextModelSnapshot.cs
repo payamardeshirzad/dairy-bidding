@@ -30,8 +30,8 @@ namespace DairyBidding.BiddingService.Data.Migrations
                         .HasColumnName("auction_id");
 
                     b.Property<decimal>("HighestBidAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
                         .HasColumnName("highest_bid_amount");
 
                     b.Property<string>("HighestBidderId")
@@ -39,6 +39,13 @@ namespace DairyBidding.BiddingService.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("highest_bidder_id");
+
+                    b.Property<int>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("row_version");
 
                     b.Property<int>("TotalBids")
                         .HasColumnType("integer")
@@ -64,6 +71,11 @@ namespace DairyBidding.BiddingService.Data.Migrations
                     b.Property<DateTime>("EndsAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("ends_at");
+
+                    b.Property<decimal>("StartingPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("starting_price");
 
                     b.Property<DateTime>("StartsAt")
                         .HasColumnType("timestamp with time zone")
