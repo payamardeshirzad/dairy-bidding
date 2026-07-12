@@ -6,6 +6,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
 builder.Services.AddAuctionDatabase(builder.Configuration);
+builder.Services.AddAuctionOptions(builder.Configuration);
 builder.Services.AddAuctionAuthentication(builder.Configuration);
 builder.Services.AddAuctionMessaging(builder.Configuration);
 builder.Services.AddAuctionCors(builder.Configuration);
@@ -30,3 +31,5 @@ if (app.Environment.IsDevelopment())
 app.MapAuctionEndpoints();
 
 app.Run();
+
+public partial class Program { }

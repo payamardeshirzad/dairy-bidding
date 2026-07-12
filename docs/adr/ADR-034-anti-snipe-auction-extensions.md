@@ -1,7 +1,7 @@
 # ADR-034: Anti-snipe extension history in a dedicated auction_extensions table
 
 ## Status
-Accepted — Not yet implemented
+Accepted — Implemented (2026-07-12)
 
 ## Context
 Anti-snipe logic extends an auction's end time when a bid is placed in the final minutes. Without a history of these extensions, a buyer who lost an auction can claim the closing time was moved unfairly, and there is no record to refute or confirm this.

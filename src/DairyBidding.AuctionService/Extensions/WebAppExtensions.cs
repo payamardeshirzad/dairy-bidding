@@ -72,7 +72,7 @@ public static class WebAppExtensions
                 .Select(a => new
                 {
                     a.Id, a.Title, a.Description, a.StartingPrice, a.CurrentPrice, a.BidCount,
-                    a.StartsAt, a.EndsAt, Status = a.Status.ToString(),
+                    a.StartsAt, a.EndsAt, a.ExtensionCount, Status = a.Status.ToString(),
                 })
                 .ToListAsync(ct);
 
@@ -88,9 +88,25 @@ public static class WebAppExtensions
             return Results.Ok(new
             {
                 auction.Id, auction.Title, auction.Description, auction.StartingPrice,
-                auction.CurrentPrice, auction.BidCount,
+                auction.CurrentPrice, auction.BidCount, auction.ExtensionCount,
                 auction.StartsAt, auction.EndsAt, Status = auction.Status.ToString(),
             });
+        });
+
+        app.MapGet("/auctions/{id}/extensions", async (string id, AuctionDbContext db, CancellationToken ct) =>
+        {
+            var exists = await db.Auctions.AnyAsync(a => a.Id == id, ct);
+            if (!exists)
+                return Results.NotFound(new { Message = $"Auction '{id}' not found." });
+
+            var extensions = await db.AuctionExtensions
+                .AsNoTracking()
+                .Where(x => x.AuctionId == id)
+                .OrderBy(x => x.ExtendedAt)
+                .Select(x => new { x.Id, x.BidId, x.PreviousEnd, x.NewEnd, x.ExtendedAt })
+                .ToListAsync(ct);
+
+            return Results.Ok(extensions);
         });
 
         app.MapPrometheusScrapingEndpoint();

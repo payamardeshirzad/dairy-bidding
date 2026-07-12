@@ -27,6 +27,13 @@ public static class ServiceExtensions
         return services;
     }
 
+    public static IServiceCollection AddAuctionOptions(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<DairyBidding.AuctionService.AntiSnipeOptions>(
+            configuration.GetSection("AntiSnipe"));
+        return services;
+    }
+
     public static IServiceCollection AddAuctionAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

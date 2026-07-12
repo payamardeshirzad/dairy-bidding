@@ -16,4 +16,6 @@ public class Auction
     public int BidCount { get; set; }
     /// <summary>ADR-022: optimistic concurrency token — incremented on every UPDATE.</summary>
     public int RowVersion { get; set; }
+    /// <summary>ADR-040: running count of anti-snipe extensions applied; capped at AntiSnipeOptions.MaxExtensionsPerAuction.</summary>
+    public int ExtensionCount { get; set; }
 }

@@ -9,6 +9,7 @@ public class AuctionDbContext : DbContext
 
     public DbSet<Auction> Auctions => Set<Auction>();
     public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
+    public DbSet<AuctionExtension> AuctionExtensions => Set<AuctionExtension>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +30,8 @@ public class AuctionDbContext : DbContext
             e.Property(x => x.BidCount).HasDefaultValue(0);
             // ADR-022: optimistic concurrency token
             e.Property(x => x.RowVersion).IsConcurrencyToken().HasDefaultValue(0);
+            // ADR-040: extension count, co-located with RowVersion for atomic update under optimistic lock
+            e.Property(x => x.ExtensionCount).HasDefaultValue(0);
         });
 
         modelBuilder.Entity<ProcessedMessage>(e =>
@@ -38,6 +41,19 @@ public class AuctionDbContext : DbContext
             e.Property(x => x.MessageId).HasMaxLength(100).IsRequired();
             e.Property(x => x.ProcessedAtUtc).IsRequired();
             e.HasIndex(x => x.MessageId).IsUnique();
+        });
+
+        modelBuilder.Entity<AuctionExtension>(e =>
+        {
+            e.ToTable("auction_extensions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.AuctionId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.BidId).IsRequired();
+            e.Property(x => x.PreviousEnd).IsRequired();
+            e.Property(x => x.NewEnd).IsRequired();
+            e.Property(x => x.ExtendedAt).IsRequired();
+            // One bid can trigger at most one extension; also acts as idempotency safety net
+            e.HasIndex(x => x.BidId).IsUnique();
         });
 
         modelBuilder.AddOutboxStateEntity();

@@ -3,7 +3,12 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using DairyBidding.BiddingService.Data;
+using DairyBidding.Contracts.Events;
 using FluentAssertions;
+using MassTransit;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using RabbitMQ.Client;
 
 public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
@@ -236,5 +241,76 @@ public class BiddingFlowTests : IClassFixture<BiddingApiFactory>
         read.Should().NotBeNull("read model should converge within 15 seconds");
         read!.RootElement.GetProperty("highestBidAmount").GetDecimal()
             .Should().Be(acceptedAmounts.Max(), "the read model must reflect the highest accepted bid");
+    }
+
+    /// <summary>
+    /// ADR-041: When AuctionService extends an auction's EndsAt via anti-snipe, it publishes
+    /// an AuctionStatusChangedEvent. BiddingService must consume it and update AuctionReadModel.EndsAt
+    /// so that bids in the extended window are accepted rather than rejected.
+    /// </summary>
+    [Fact]
+    public async Task AntiSnipeExtension_UpdatesReadModel_AcceptsBidsInExtendedWindow()
+    {
+        const string auctionId = "AUC-ANTI-SNIPE-PROPAGATION-TEST";
+
+        // Seed an auction with an already-expired EndsAt — avoids clock sensitivity
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
+            if (!await db.AuctionReadModels.AnyAsync(a => a.AuctionId == auctionId))
+            {
+                db.AuctionReadModels.Add(new AuctionReadModel
+                {
+                    AuctionId = auctionId,
+                    Title = "Anti-snipe propagation test",
+                    Status = "Active",
+                    StartingPrice = 50m,
+                    StartsAt = DateTime.UtcNow.AddHours(-2),
+                    EndsAt = DateTime.UtcNow.AddHours(-1), // already expired
+                    UpdatedAtUtc = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+        }
+
+        // Simulate the AuctionStatusChangedEvent published by AuctionService after an anti-snipe extension
+        var newEndsAt = DateTime.UtcNow.AddHours(1);
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var publisher = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
+            await publisher.Publish(new AuctionStatusChangedEvent(
+                Guid.NewGuid().ToString("N"),
+                auctionId,
+                "Anti-snipe propagation test",
+                "Active",
+                DateTime.UtcNow.AddHours(-2),
+                newEndsAt,
+                DateTime.UtcNow,
+                50m));
+        }
+
+        // Poll until AuctionStatusChangedConsumer has updated AuctionReadModel.EndsAt
+        var updated = await PollUntilAsync(
+            async () =>
+            {
+                await using var scope = _factory.Services.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<BiddingDbContext>();
+                var model = await db.AuctionReadModels.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.AuctionId == auctionId);
+                return model?.EndsAt > DateTime.UtcNow ? model : null;
+            },
+            attempts: 20, delayMs: 500);
+
+        updated.Should().NotBeNull("AuctionStatusChangedConsumer must update AuctionReadModel.EndsAt");
+
+        // Now place a bid — must be accepted because EndsAt is in the future
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", JwtTestToken.Create());
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+
+        var res = await client.PostAsJsonAsync("/bids", new { auctionId, amount = 75m });
+        res.StatusCode.Should().Be(HttpStatusCode.OK,
+            "bid should be accepted after anti-snipe extension propagated updated EndsAt to BiddingService");
     }
 }
