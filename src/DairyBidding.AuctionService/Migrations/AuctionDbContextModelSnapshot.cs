@@ -29,9 +29,22 @@ namespace DairyBidding.AuctionService.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("id");
 
+                    b.Property<int>("BidCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("bid_count");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
+
+                    b.Property<decimal>("CurrentPrice")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("current_price");
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -43,8 +56,16 @@ namespace DairyBidding.AuctionService.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("ends_at");
 
+                    b.Property<int>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("row_version");
+
                     b.Property<decimal>("StartingPrice")
-                        .HasColumnType("numeric(18,2)")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
                         .HasColumnName("starting_price");
 
                     b.Property<DateTime>("StartsAt")
@@ -65,6 +86,33 @@ namespace DairyBidding.AuctionService.Migrations
                         .HasName("pk_auctions");
 
                     b.ToTable("auctions", (string)null);
+                });
+
+            modelBuilder.Entity("DairyBidding.AuctionService.Data.ProcessedMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("MessageId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTime>("ProcessedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at_utc");
+
+                    b.HasKey("Id")
+                        .HasName("pk_processed_messages");
+
+                    b.HasIndex("MessageId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_processed_messages_message_id");
+
+                    b.ToTable("processed_messages", (string)null);
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
@@ -113,6 +161,8 @@ namespace DairyBidding.AuctionService.Migrations
                         .HasColumnName("received");
 
                     b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("bytea")
                         .HasColumnName("row_version");
 
@@ -121,6 +171,9 @@ namespace DairyBidding.AuctionService.Migrations
 
                     b.HasAlternateKey("MessageId", "ConsumerId")
                         .HasName("ak_inbox_state_message_id_consumer_id");
+
+                    b.HasIndex("Delivered")
+                        .HasDatabaseName("ix_inbox_state_delivered");
 
                     b.ToTable("inbox_state", (string)null);
                 });

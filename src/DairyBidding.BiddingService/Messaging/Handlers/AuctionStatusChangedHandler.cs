@@ -32,6 +32,7 @@ public sealed class AuctionStatusChangedHandler(BiddingDbContext db, ILogger<Auc
                 AuctionId = evt.AuctionId,
                 Title = evt.Title,
                 Status = evt.Status,
+                StartingPrice = evt.StartingPrice,
                 StartsAt = evt.StartsAt,
                 EndsAt = evt.EndsAt,
                 UpdatedAtUtc = evt.ChangedAtUtc,
@@ -41,6 +42,7 @@ public sealed class AuctionStatusChangedHandler(BiddingDbContext db, ILogger<Auc
         {
             existing.Status = evt.Status;
             existing.Title = evt.Title;
+            existing.StartingPrice = evt.StartingPrice;
             existing.StartsAt = evt.StartsAt;
             existing.EndsAt = evt.EndsAt;
             existing.UpdatedAtUtc = evt.ChangedAtUtc;

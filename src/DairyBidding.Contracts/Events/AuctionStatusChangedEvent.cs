@@ -7,5 +7,6 @@ public record AuctionStatusChangedEvent(
     string Status,
     DateTime StartsAt,
     DateTime EndsAt,
-    DateTime ChangedAtUtc
+    DateTime ChangedAtUtc,
+    decimal StartingPrice
 );

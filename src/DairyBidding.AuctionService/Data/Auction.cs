@@ -10,4 +10,12 @@ public class Auction
     public DateTime EndsAt { get; set; }
     public AuctionStatus Status { get; set; }
     public DateTime CreatedAtUtc { get; set; }
+    /// <summary>ADR-028: denormalized current leading bid price, updated by BidPlacedEvent consumer.</summary>
+    public decimal CurrentPrice { get; set; }
+    /// <summary>ADR-028: denormalized total accepted bid count, updated by BidPlacedEvent consumer.</summary>
+    public int BidCount { get; set; }
+    /// <summary>ADR-022: optimistic concurrency token — incremented on every UPDATE.</summary>
+    public int RowVersion { get; set; }
+    /// <summary>ADR-040: running count of anti-snipe extensions applied; capped at AntiSnipeOptions.MaxExtensionsPerAuction.</summary>
+    public int ExtensionCount { get; set; }
 }

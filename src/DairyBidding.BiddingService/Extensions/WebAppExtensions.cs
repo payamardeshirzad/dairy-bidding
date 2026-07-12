@@ -128,6 +128,22 @@ public static class WebAppExtensions
                 });
             }
 
+            // ADR-022/ADR-028: reject bids that do not exceed the current minimum.
+            // Uses the BiddingService read model (eventually consistent) for a fast
+            // pre-flight check. The definitive ordering is enforced by the handler's
+            // optimistic lock, but rejecting here avoids unnecessary queue traffic.
+            var currentHighest = await db.AuctionBidReadModels
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.AuctionId == request.AuctionId, ct);
+
+            var minimumAcceptable = currentHighest?.HighestBidAmount ?? auctionState.StartingPrice;
+            if (request.Amount <= minimumAcceptable)
+                return Results.Conflict(new
+                {
+                    Message = $"Bid amount {request.Amount:C} must exceed the current minimum of {minimumAcceptable:C}.",
+                    CurrentMinimum = minimumAcceptable,
+                });
+
             var bid = new Bid
             {
                 AuctionId = request.AuctionId,

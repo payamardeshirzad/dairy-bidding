@@ -1,5 +1,8 @@
 using DairyBidding.AuctionService.Data;
+using DairyBidding.AuctionService.Messaging;
+using DairyBidding.AuctionService.Messaging.Handlers;
 using DairyBidding.Contracts.Events;
+using DairyBidding.SharedKernel.Messaging;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +24,13 @@ public static class ServiceExtensions
         services.AddDbContext<AuctionDbContext>(options =>
             options.UseNpgsql(connectionString).UseSnakeCaseNamingConvention());
 
+        return services;
+    }
+
+    public static IServiceCollection AddAuctionOptions(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<DairyBidding.AuctionService.AntiSnipeOptions>(
+            configuration.GetSection("AntiSnipe"));
         return services;
     }
 
@@ -49,6 +59,9 @@ public static class ServiceExtensions
                 o.UseBusOutbox();
             });
 
+            // ADR-028: consume BidPlacedEvent to update denormalized CurrentPrice/BidCount
+            x.AddConsumer<BidPlacedConsumer>();
+
             x.UsingRabbitMq((ctx, cfg) =>
             {
                 var host = configuration["RabbitMQ:Host"] ?? "localhost";
@@ -64,9 +77,19 @@ public static class ServiceExtensions
                 cfg.Message<AuctionStatusChangedEvent>(e => e.SetEntityName("auctions.fanout"));
                 cfg.Publish<AuctionStatusChangedEvent>(p => p.ExchangeType = "fanout");
 
-                cfg.ConfigureEndpoints(ctx);
+                // Bind to the existing bids.topic exchange published by BiddingService
+                cfg.Message<BidPlacedEvent>(e => e.SetEntityName("bids.topic"));
+
+                cfg.ReceiveEndpoint("auction.bid-placed", e =>
+                {
+                    e.SetQueueArgument("x-queue-type", "quorum");
+                    e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(500)));
+                    e.ConfigureConsumer<BidPlacedConsumer>(ctx);
+                });
             });
         });
+
+        services.AddScoped<IMessageHandler<BidPlacedEvent>, BidPlacedHandler>();
 
         return services;
     }

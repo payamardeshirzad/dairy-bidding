@@ -44,17 +44,29 @@ jobs:
 
       - name: Run unit tests (with coverage)
         run: |
-          dotnet test --no-build -c Release \
-            --filter "FullyQualifiedName!~IntegrationTests" \
+          dotnet test tests/DairyBidding.BiddingService.Tests \
+            --no-build -c Release \
             --collect:"XPlat Code Coverage" \
-            --logger "trx;LogFileName=unit-tests.trx"
+            --logger "trx;LogFileName=unit-tests-bidding.trx"
+          dotnet test tests/DairyBidding.AuctionService.Tests \
+            --no-build -c Release \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=unit-tests-auction.trx"
 
       - name: Run integration tests
         run: |
-          dotnet test tests/DairyBidding.BiddingService.IntegrationTests/DairyBidding.BiddingService.IntegrationTests.csproj \
+          dotnet test tests/DairyBidding.BiddingService.IntegrationTests \
             --no-build -c Release \
             --collect:"XPlat Code Coverage" \
-            --logger "trx;LogFileName=integration-tests.trx"
+            --logger "trx;LogFileName=integration-tests-bidding.trx"
+          dotnet test tests/DairyBidding.AuctionService.IntegrationTests \
+            --no-build -c Release \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=integration-tests-auction.trx"
+          dotnet test tests/DairyBidding.IdentityService.IntegrationTests \
+            --no-build -c Release \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=integration-tests-identity.trx"
 
       - name: Install ReportGenerator
         if: always()

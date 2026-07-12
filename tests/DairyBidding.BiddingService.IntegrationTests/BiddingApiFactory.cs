@@ -99,6 +99,7 @@ public sealed class BiddingApiFactory : WebApplicationFactory<Program>, IAsyncLi
                 AuctionId = TestAuctionId,
                 Title = "Integration Test Auction",
                 Status = "Active",
+                StartingPrice = 100m,
                 StartsAt = DateTime.UtcNow.AddHours(-1),
                 EndsAt = DateTime.UtcNow.AddHours(23),
                 UpdatedAtUtc = DateTime.UtcNow,
