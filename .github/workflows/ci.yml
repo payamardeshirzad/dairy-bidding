@@ -44,14 +44,19 @@ jobs:
 
       - name: Run unit tests (with coverage)
         run: |
-          dotnet test --no-build -c Release \
-            --filter "FullyQualifiedName!~IntegrationTests" \
+          dotnet test \
+            tests/DairyBidding.BiddingService.Tests \
+            tests/DairyBidding.AuctionService.Tests \
+            --no-build -c Release \
             --collect:"XPlat Code Coverage" \
             --logger "trx;LogFileName=unit-tests.trx"
 
       - name: Run integration tests
         run: |
-          dotnet test tests/DairyBidding.BiddingService.IntegrationTests/DairyBidding.BiddingService.IntegrationTests.csproj \
+          dotnet test \
+            tests/DairyBidding.BiddingService.IntegrationTests \
+            tests/DairyBidding.AuctionService.IntegrationTests \
+            tests/DairyBidding.IdentityService.IntegrationTests \
             --no-build -c Release \
             --collect:"XPlat Code Coverage" \
             --logger "trx;LogFileName=integration-tests.trx"
